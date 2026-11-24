@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
 
+// Gantt dates use local calendar operations; references must use one timezone.
+process.env.TZ = 'UTC';
+
 const context = vm.createContext({});
 vm.runInContext(fs.readFileSync('vendor/pele/pele.global.js', 'utf8'), context);
 const digest = values => crypto.createHash('sha256').update(values.join('\0')).digest('hex');
@@ -24,5 +27,5 @@ for (const file of fs.readdirSync('test/corpus').filter(name => name.endsWith('-
     }
   });
 }
-fs.writeFileSync('test/corpus/manifest.json', JSON.stringify({pele: '1.13.0', now: options.now, files}, null, 2) + '\n');
+fs.writeFileSync('test/corpus/manifest.json', JSON.stringify({pele: '1.13.0', timezone: 'UTC', now: options.now, files}, null, 2) + '\n');
 console.log(`${count} cases across ${Object.keys(files).length} diagram types`);

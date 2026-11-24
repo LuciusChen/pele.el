@@ -12,7 +12,7 @@ jobs:
       - name: Install build and test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y emacs-gtk build-essential python3 pkg-config libpango1.0-dev
+          sudo apt-get install -y emacs-gtk build-essential python3 pkg-config libpango1.0-dev elpa-markdown-mode
       - name: Build and validate
         run: make -j2 check
       - name: Validate without Pango

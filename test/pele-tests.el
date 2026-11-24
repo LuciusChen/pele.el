@@ -278,8 +278,8 @@
     (unwind-protect
         (progn
           (pele-org-mode 1) (pele-test--wait)
-          (should (= 1 (length pele--org-overlays)))
-          (should (overlay-get (car pele--org-overlays) 'pele-result)))
+          (should (= 1 (length pele--inline-overlays)))
+          (should (overlay-get (car pele--inline-overlays) 'pele-result)))
       (pele-org-mode -1))))
 
 (ert-deftest pele-preview-cancels-on-mode-change-and-keeps-new-content ()
@@ -321,8 +321,8 @@
         (progn
           (pele-org-mode 1)
           (pele-test--wait)
-          (should (= 1 (length pele--org-overlays)))
-          (should (overlay-get (car pele--org-overlays) 'pele-result))
+          (should (= 1 (length pele--inline-overlays)))
+          (should (overlay-get (car pele--inline-overlays) 'pele-result))
           (should-not (buffer-modified-p)))
       (pele-org-mode -1))))
 
@@ -333,9 +333,9 @@
     (unwind-protect
         (progn
           (pele-org-mode 1) (pele-test--wait)
-          (let* ((overlay (car pele--org-overlays)) (image (overlay-get overlay 'after-string)))
+          (let* ((overlay (car pele--inline-overlays)) (image (overlay-get overlay 'after-string)))
             (goto-char (point-min)) (search-forward "A --> B") (replace-match "A[")
-            (pele--org-refresh) (pele-test--wait)
+            (pele--inline-refresh) (pele-test--wait)
             (should (equal image (overlay-get overlay 'after-string)))
             (should (stringp (overlay-get overlay 'help-echo)))))
       (pele-org-mode -1))))
@@ -347,8 +347,8 @@
     (unwind-protect
         (progn
           (pele-org-mode 1) (pele-test--wait)
-          (erase-buffer) (pele--org-refresh)
-          (should-not pele--org-overlays))
+          (erase-buffer) (pele--inline-refresh)
+          (should-not pele--inline-overlays))
       (pele-org-mode -1))))
 
 (ert-deftest pele-org-cleans-up-on-major-mode-change ()
@@ -356,7 +356,7 @@
     (org-mode)
     (insert "#+begin_src mermaid\ninfo\n#+end_src\n")
     (pele-org-mode 1) (pele-test--wait)
-    (let ((overlay (car pele--org-overlays)))
+    (let ((overlay (car pele--inline-overlays)))
       (fundamental-mode)
       (should-not (overlay-buffer overlay)))))
 
@@ -368,8 +368,8 @@
     (unwind-protect
         (progn
           (pele-org-mode 1) (pele-test--wait)
-          (should (= 45 (length pele--org-overlays)))
-          (dolist (overlay pele--org-overlays)
+          (should (= 45 (length pele--inline-overlays)))
+          (dolist (overlay pele--inline-overlays)
             (should (overlay-get overlay 'pele-result))))
       (pele-org-mode -1))))
 

@@ -5,7 +5,7 @@ Edit Mermaid and render SVG diagrams in Emacs with the original [Pele](https://g
 ![Mermaid source highlighting and an inline flowchart preview in Emacs](docs/images/workflow.png)
 
 - Edit Mermaid with the official website's highlighting rules, implemented in pure Elisp.
-- Preview diagrams live in Org or in a separate window from any buffer.
+- Preview diagrams live in Org and Markdown, or in a separate window from any buffer.
 - Export SVG directly or through Org Babel.
 - Render locally in a background worker, with no Mermaid CLI, Node.js or browser required.
 
@@ -51,7 +51,7 @@ For editing and highlighting alone, require `pele-mode` instead. Loading the Lis
 
 ### Source files and regions
 
-Open a `.mmd` or `.mermaid` file to enter `pele-mode`. Use `C-c C-p` to preview or `C-c C-e` to export SVG. In other buffers, select a region of Mermaid source and run `M-x pele-preview` or `M-x pele-export`. With no region, these commands use the Org source block at point or the whole diagram buffer.
+Open a `.mmd` or `.mermaid` file to enter `pele-mode`. Use `C-c C-p` to preview or `C-c C-e` to export SVG. In other buffers, select a region of Mermaid source and run `M-x pele-preview` or `M-x pele-export`. With no region, these commands use the Org or Markdown code block at point, or the whole diagram buffer.
 
 In a preview, `g` renders again, `s` saves SVG and `q` quits. Customize `pele-indent-offset` (default 2) and the `pele-highlighting` face group to adjust source editing.
 
@@ -87,6 +87,20 @@ sequenceDiagram
 `:file` is required and must end in `.svg`. Optional `:width` and `:font-size` use pixels. Org's normal Babel execution and confirmation settings apply.
 
 To handle existing `mermaid` Babel blocks, call `(pele-babel-enable-mermaid)` explicitly. If using `ob-mermaid`, load it first. `(pele-babel-disable-mermaid)` restores the execution function saved when the override was enabled. Requiring `ob-pele` alone leaves other Babel backends in place.
+
+### Markdown
+
+Enable `pele-markdown-mode` in a Markdown buffer, or add hooks:
+
+```elisp
+(require 'pele-markdown)
+(add-hook 'markdown-mode-hook #'pele-markdown-mode)
+(add-hook 'markdown-ts-mode-hook #'pele-markdown-mode)
+```
+
+Mermaid fenced code blocks show live SVG previews below the closing fence. This works with `markdown-mode`, `gfm-mode` and `markdown-ts-mode`. Both backtick and tilde fences are supported, with `mermaid` or `pele` as the language. The Markdown major mode continues to handle editing and fenced-code highlighting.
+
+Edits refresh after `pele-preview-delay`, retaining the last successful diagram while the source is incomplete. Disabling the mode, deleting a block, changing major modes or killing the buffer cancels its pending work and removes previews. The Markdown file is unchanged. With point inside a Mermaid fence, `pele-preview` and `pele-export` also work without enabling live previews. Try [examples/gallery.md](examples/gallery.md).
 
 ## Appearance and render options
 

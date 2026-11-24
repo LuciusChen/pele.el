@@ -16,7 +16,7 @@
    1 nil
    (lambda ()
      (let (images errors)
-       (dolist (overlay pele--org-overlays)
+       (dolist (overlay pele--inline-overlays)
          (let ((result (overlay-get overlay 'pele-result)))
            (if result
                (condition-case error

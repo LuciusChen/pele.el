@@ -10,7 +10,7 @@ These `*-docs.json` files are copied without changes from:
 
 There are 522 examples in 33 diagram categories, all accepted by Pele 1.13.0. The upstream files derive from Mermaid documentation; see the source project's attribution and MIT license for those examples.
 
-`manifest.json` is generated locally by `scripts/update-corpus.mjs` using the pinned, unmodified Pele 1.13.0 bundle. It records successful types, dimensions and SHA-256 digests of path data and text, or upstream error codes. It fixes Gantt's reference time to 2026-01-01 UTC. It does not require another renderer at test runtime.
+`manifest.json` is generated locally by `scripts/update-corpus.mjs` using the pinned, unmodified Pele 1.13.0 bundle. It records successful types, dimensions and SHA-256 digests of path data and text, or upstream error codes. It fixes Gantt's reference time to 2026-01-01 UTC and records the UTC timezone used for local-calendar date operations. Corpus tests apply that timezone in their isolated Emacs process. It does not require another renderer at test runtime.
 
 The comparison uses Pele's built-in Arial width estimates and generic sans-serif / monospace font families to match the Node reference. A second render checks the same examples with the package's default font measurements, including Pango when available.
 

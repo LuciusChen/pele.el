@@ -1,6 +1,7 @@
 EMACS ?= emacs
 PYTHON ?= python3
 CC ?= cc
+MARKDOWN_MODE_DIR ?= $(firstword $(wildcard /usr/share/emacs/site-lisp/elpa/markdown-mode-*))
 MODULE_SUFFIX := $(shell $(EMACS) -Q --batch --eval '(princ (or module-file-suffix ".so"))')
 EMACS_INCLUDE ?= $(shell $(EMACS) -Q --batch --eval '(princ (file-name-directory (or (locate-file "emacs-module.h" (list (expand-file-name "../include" invocation-directory) (expand-file-name "../../../include" invocation-directory) "/opt/homebrew/include" "/usr/local/include" "/usr/include")) "./emacs-module.h")))')
 MODULE := pele-native$(MODULE_SUFFIX)
@@ -42,11 +43,11 @@ $(MODULE): $(OBJECTS)
 
 compile:
 	$(EMACS) -Q --batch --eval '(dolist (file (directory-files "test" t "\\.el$$")) (with-temp-buffer (insert-file-contents file) (emacs-lisp-mode) (check-parens)))'
-	$(EMACS) -Q --batch -L . --eval '(setq byte-compile-error-on-warn t)' -f batch-byte-compile pele-font-lock.el pele-mode.el pele.el ob-pele.el
+	$(EMACS) -Q --batch -L . --eval '(setq byte-compile-error-on-warn t)' -f batch-byte-compile pele-font-lock.el pele-mode.el pele.el pele-markdown.el ob-pele.el
 
 test: all compile
 	$(EMACS) -Q --batch -L . -L test -l pele-mode-tests -l pele-highlighting-tests -f ert-run-tests-batch-and-exit
-	$(EMACS) -Q --batch --module-assertions -L . -L test -l pele-tests -f ert-run-tests-batch-and-exit
+	$(EMACS) -Q --batch --module-assertions -L . -L test $(if $(MARKDOWN_MODE_DIR),-L "$(MARKDOWN_MODE_DIR)") -l pele-tests -l pele-markdown-tests -f ert-run-tests-batch-and-exit
 
 test-corpus: all compile
 	$(EMACS) -Q --batch --module-assertions -L . -L test -l pele-corpus-tests -f ert-run-tests-batch-and-exit

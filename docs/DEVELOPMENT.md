@@ -9,6 +9,7 @@ Source editing is independent of the native renderer. Highlighting follows the w
 ```text
 pele-mode.el + pele-font-lock.el       source editing and highlighting
                   pele.el             API, scheduler, cache, previews and Org
+             pele-markdown.el         Markdown block collectors and minor mode
                      ↓
             src/pele-module.c         worker owns QuickJS and original Pele
                      ↓
@@ -18,6 +19,8 @@ pele-mode.el + pele-font-lock.el       source editing and highlighting
 ```
 
 Only the Emacs thread calls the Emacs module API. A completion pipe wakes Emacs; a timer provides fallback delivery while requests are pending. Elisp submits at most eight jobs at once to the bounded native queue. Cancellation, deadlines and shutdown share this single request path. No polling runs when there is no pending work.
+
+Org and Markdown share one inline preview lifecycle: block collectors return `:begin`, `:end` and `:source` plists; the common layer owns overlays, idle refreshes and cancellation. The legacy Markdown collector scans fence boundaries and uses `markdown-mode` syntax properties to exclude comments and indented code; this also handles long backtick fences that older versions do not recognize. The Tree-sitter collector uses the existing `markdown-ts-mode` Markdown tree. Neither creates a Mermaid parser or adds a Tree-sitter requirement to other modes.
 
 The JavaScript runtime has a 128 MiB memory limit. The bridge caps source at 50,000 characters, edges at 5,000 and upstream SVG at 4,000,000 characters. It resolves scoped CSS variables and corner radii for Emacs SVG display while preserving Pele's paths, labels and dimensions. Node fills and label backings remain intact. Diagram images and clickable links are disabled; external icon libraries and mathematical typesetters are not bundled, so Pele's text fallback applies.
 
@@ -34,6 +37,8 @@ make -j4 check PANGO_LIBS= PANGO_CFLAGS=
 ```
 
 Run `make clean` before changing font backends, then rebuild normally to restore Pango. Linux CI checks both builds. Rendering tests use Emacs module assertions and cover cancellation, deadlines, queueing, recovery, cache behavior, preview cleanup, themes and Babel. The corpus checks the generated SVG as XML and compares type, dimensions, paths and text to the original engine using identical width estimates. It also exercises all examples with the default font backend.
+
+Markdown tests exercise both real major modes when available, including nested literal fences, edits, indentation, unclosed fences and lifecycle cleanup. Tests for an unavailable host mode or Markdown grammar are skipped. Debian/Ubuntu's `elpa-markdown-mode` is discovered automatically for tests. For a local checkout, pass `make check MARKDOWN_MODE_DIR=/path/to/markdown-mode`; `markdown-ts-mode` tests use the Markdown grammars already installed for that mode.
 
 The pure Elisp editor suite can run independently of the native build:
 

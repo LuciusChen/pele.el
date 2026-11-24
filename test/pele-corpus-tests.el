@@ -21,6 +21,9 @@
 
 (let* ((manifest (pele-corpus--read "manifest.json"))
        (now (gethash "now" manifest)))
+  ;; Match the original engine's reference timezone, including local-calendar
+  ;; Gantt operations. This affects only the isolated corpus-test process.
+  (set-time-zone-rule (gethash "timezone" manifest))
   (maphash
    (lambda (file expected)
      (ert-set-test

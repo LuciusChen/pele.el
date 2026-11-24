@@ -10,7 +10,7 @@
 ;;; Commentary:
 ;; Render Mermaid with the unmodified Pele engine, embedded in a native module.
 ;; A persistent worker owns the JavaScript runtime; it never calls Emacs APIs.
-;; `pele-preview' previews a region, a Mermaid Org block, or the whole buffer.
+;; `pele-preview' previews a region, a Mermaid code block, or the whole buffer.
 ;; `pele-org-mode' adds live previews below Mermaid source blocks.
 ;; Build the module with `make' before using this package.  No Node.js, browser,
 ;; network connection, or external rendering process is needed at runtime.
@@ -382,8 +382,8 @@ Interactive previews use the asynchronous API instead."
 
 (add-hook 'kill-emacs-hook #'pele-shutdown)
 
-(defun pele--org-language-p (language)
-  "Return non-nil when Org source LANGUAGE is handled by Pele."
+(defun pele--language-p (language)
+  "Return non-nil when source LANGUAGE is handled by Pele."
   (member (downcase (or language "")) '("mermaid" "pele")))
 
 (defun pele--org-block ()
@@ -392,14 +392,17 @@ Interactive previews use the asynchronous API instead."
     (require 'org-element)
     (let ((element (org-element-lineage (org-element-context) '(src-block) t)))
       (when (and element
-                 (pele--org-language-p (org-element-property :language element)))
+                 (pele--language-p (org-element-property :language element)))
         element))))
 
 (defun pele--source-at-point ()
-  "Return the active region, current Mermaid Org block, or buffer contents."
+  "Return the active region, current Mermaid code block, or buffer contents."
   (cond ((use-region-p) (buffer-substring-no-properties (region-beginning) (region-end)))
         ((pele--org-block) (org-element-property :value (pele--org-block)))
         ((derived-mode-p 'org-mode) (user-error "Point is not in a Mermaid source block"))
+        ((derived-mode-p 'markdown-mode 'markdown-ts-mode)
+         (or (pele-markdown--source-at-point)
+             (user-error "Point is not in a Mermaid code block")))
         (t (buffer-substring-no-properties (point-min) (point-max)))))
 
 (defun pele--window-width ()
@@ -468,7 +471,7 @@ Interactive previews use the asynchronous API instead."
 
 ;;;###autoload
 (defun pele-preview ()
-  "Preview the region, current Mermaid Org block, or Mermaid buffer."
+  "Preview the region, current Mermaid code block, or Mermaid buffer."
   (interactive)
   (let ((source (pele--source-at-point)))
     (pop-to-buffer (get-buffer-create "*Pele Preview*"))
@@ -485,87 +488,118 @@ Interactive previews use the asynchronous API instead."
     (with-temp-file file (insert (plist-get result :svg))))
   (message "Saved %s" file))
 
-(defvar-local pele--org-overlays nil)
-(defvar-local pele--org-timer nil)
-(defvar pele-org-mode)
+(defvar-local pele--inline-overlays nil)
+(defvar-local pele--inline-timer nil)
+(defvar-local pele--inline-blocks-function nil)
 
-(defun pele--org-delete (overlay)
+(defun pele--inline-delete (overlay)
   "Remove OVERLAY and cancel its pending rendering."
   (when-let* ((id (overlay-get overlay 'pele-request))) (pele-cancel id))
   (when-let* ((marker (overlay-get overlay 'pele-begin))) (set-marker marker nil))
   (delete-overlay overlay))
 
-(defun pele--org-refresh ()
-  "Refresh Mermaid block previews in the current Org buffer."
-  (when pele--org-timer (cancel-timer pele--org-timer))
-  (setq pele--org-timer nil)
-  (when pele-org-mode
-    (require 'org-element)
-    (let ((old pele--org-overlays) (buffer (current-buffer))
-          (width (pele--window-width)) next)
+(defun pele--inline-update (overlay source options width)
+  "Update OVERLAY for SOURCE, OPTIONS and available WIDTH."
+  (let ((key (concat source "\0" (pele--options-json options)))
+        (buffer (current-buffer)))
+    (unless (equal key (overlay-get overlay 'pele-key))
+      (when-let* ((id (overlay-get overlay 'pele-request))) (pele-cancel id))
+      (overlay-put overlay 'pele-key key)
+      (overlay-put
+       overlay 'pele-request
+       (pele-render-async
+        source
+        (lambda (result)
+          (when (and (buffer-live-p buffer) (overlay-buffer overlay)
+                     (equal key (overlay-get overlay 'pele-key)))
+            (with-current-buffer buffer
+              (overlay-put overlay 'pele-request nil)
+              (if (plist-get result :ok)
+                  (progn
+                    (overlay-put overlay 'pele-result result)
+                    (overlay-put overlay 'help-echo "Mermaid preview")
+                    (overlay-put overlay 'after-string
+                                 (concat "\n" (propertize " " 'display
+                                                          (pele--image result width)) "\n")))
+                (let ((message (plist-get (plist-get result :error) :message)))
+                  (overlay-put overlay 'help-echo message)
+                  (unless (overlay-get overlay 'pele-result)
+                    (overlay-put overlay 'after-string
+                                 (propertize (concat "\n" message "\n") 'face 'error))))))))
+        options)))))
+
+(defun pele--inline-refresh ()
+  "Refresh previews using the current buffer's block collector."
+  (when pele--inline-timer (cancel-timer pele--inline-timer))
+  (setq pele--inline-timer nil)
+  (when pele--inline-blocks-function
+    (save-excursion
       (save-restriction
         (widen)
-        (org-element-map (org-element-parse-buffer) 'src-block
-          (lambda (element)
-            (when (pele--org-language-p (org-element-property :language element))
-              (let* ((begin (org-element-property :begin element))
-                     (end (org-element-property :end element))
-                     (source (org-element-property :value element))
-                     (options (list :max-width width))
-                     (key (concat source "\0" (pele--options-json options)))
-                     (overlay (or (seq-find
-                                   (lambda (candidate)
-                                     (equal begin (marker-position (overlay-get candidate 'pele-begin))))
-                                   old)
-                                  (make-overlay end end))))
-                (setq old (delq overlay old))
-                (push overlay next)
-                (unless (overlay-get overlay 'pele-begin)
-                  (overlay-put overlay 'pele-begin (copy-marker begin)))
-                (move-overlay overlay end end)
-                (unless (equal key (overlay-get overlay 'pele-key))
-                  (when-let* ((id (overlay-get overlay 'pele-request))) (pele-cancel id))
-                  (overlay-put overlay 'pele-key key)
-                  (overlay-put overlay 'pele-request
-                               (pele-render-async
-                                source
-                                (lambda (result)
-                                  (when (and (buffer-live-p buffer) (overlay-buffer overlay)
-                                             (equal key (overlay-get overlay 'pele-key)))
-                                    (with-current-buffer buffer
-                                      (overlay-put overlay 'pele-request nil)
-                                      (if (plist-get result :ok)
-                                          (progn
-                                            (overlay-put overlay 'pele-result result)
-                                            (overlay-put overlay 'help-echo "Mermaid preview")
-                                            (overlay-put overlay 'after-string
-                                                         (concat "\n" (propertize " " 'display
-                                                                                  (pele--image result width)) "\n")))
-                                        (let ((message (plist-get (plist-get result :error) :message)))
-                                          (overlay-put overlay 'help-echo message)
-                                          (unless (overlay-get overlay 'pele-result)
-                                            (overlay-put overlay 'after-string
-                                                         (propertize (concat "\n" message "\n") 'face 'error))))))))
-                                options))))))))
-      (mapc #'pele--org-delete old)
-      (setq pele--org-overlays (nreverse next)))))
+        (let ((blocks (funcall pele--inline-blocks-function))
+              (old pele--inline-overlays)
+              (width (pele--window-width)))
+          (setq pele--inline-overlays nil)
+          (unwind-protect
+              (dolist (block blocks)
+                (let* ((begin (plist-get block :begin))
+                       (end (plist-get block :end))
+                       (overlay (or (seq-find
+                                     (lambda (candidate)
+                                       (equal begin (marker-position
+                                                     (overlay-get candidate 'pele-begin))))
+                                     old)
+                                    (make-overlay end end))))
+                  (setq old (delq overlay old))
+                  ;; Track ownership before starting work, including error paths.
+                  (push overlay pele--inline-overlays)
+                  (unless (overlay-get overlay 'pele-begin)
+                    (overlay-put overlay 'pele-begin (copy-marker begin)))
+                  (move-overlay overlay end end)
+                  (pele--inline-update overlay (plist-get block :source)
+                                       (list :max-width width) width)))
+            (mapc #'pele--inline-delete old)
+            (setq pele--inline-overlays (nreverse pele--inline-overlays))))))))
 
-(defun pele--org-schedule (&rest _)
+(defun pele--inline-schedule (&rest _)
   "Schedule a refresh of the current buffer's previews."
-  (when pele--org-timer (cancel-timer pele--org-timer))
+  (when pele--inline-timer (cancel-timer pele--inline-timer))
   (let ((buffer (current-buffer)))
-    (setq pele--org-timer
+    (setq pele--inline-timer
           (run-with-idle-timer pele-preview-delay nil
                                (lambda ()
                                  (when (buffer-live-p buffer)
-                                   (with-current-buffer buffer (pele--org-refresh))))))))
+                                   (with-current-buffer buffer (pele--inline-refresh))))))))
 
-(defun pele--org-cleanup ()
-  "Remove previews and timers belonging to the current buffer."
-  (when pele--org-timer (cancel-timer pele--org-timer))
-  (setq pele--org-timer nil)
-  (mapc #'pele--org-delete pele--org-overlays)
-  (setq pele--org-overlays nil))
+(defun pele--inline-disable ()
+  "Remove the current buffer's previews, hooks and pending work."
+  (remove-hook 'after-change-functions #'pele--inline-schedule t)
+  (remove-hook 'kill-buffer-hook #'pele--inline-disable t)
+  (remove-hook 'change-major-mode-hook #'pele--inline-disable t)
+  (when pele--inline-timer (cancel-timer pele--inline-timer))
+  (setq pele--inline-timer nil pele--inline-blocks-function nil)
+  (mapc #'pele--inline-delete pele--inline-overlays)
+  (setq pele--inline-overlays nil))
+
+(defun pele--inline-enable (collector)
+  "Enable previews for blocks returned by COLLECTOR.
+Each block is a plist with :begin, :end and :source."
+  (pele--inline-disable)
+  (setq pele--inline-blocks-function collector)
+  (add-hook 'after-change-functions #'pele--inline-schedule nil t)
+  (add-hook 'kill-buffer-hook #'pele--inline-disable nil t)
+  (add-hook 'change-major-mode-hook #'pele--inline-disable nil t)
+  (pele--inline-refresh))
+
+(defun pele--org-blocks ()
+  "Collect Mermaid Org blocks for inline preview."
+  (require 'org-element)
+  (org-element-map (org-element-parse-buffer) 'src-block
+    (lambda (element)
+      (when (pele--language-p (org-element-property :language element))
+        (list :begin (org-element-property :begin element)
+              :end (org-element-property :end element)
+              :source (org-element-property :value element))))))
 
 ;;;###autoload
 (define-minor-mode pele-org-mode
@@ -578,24 +612,22 @@ Previews are overlays and do not modify the Org file."
         (unless (derived-mode-p 'org-mode)
           (setq pele-org-mode nil)
           (user-error "Pele Org mode requires an Org buffer"))
-        (add-hook 'after-change-functions #'pele--org-schedule nil t)
-        (add-hook 'kill-buffer-hook #'pele--org-cleanup nil t)
-        (add-hook 'change-major-mode-hook #'pele--org-cleanup nil t)
-        (pele--org-refresh))
-    (remove-hook 'after-change-functions #'pele--org-schedule t)
-    (remove-hook 'kill-buffer-hook #'pele--org-cleanup t)
-    (remove-hook 'change-major-mode-hook #'pele--org-cleanup t)
-    (pele--org-cleanup)))
+        (pele--inline-enable #'pele--org-blocks))
+    (when (eq pele--inline-blocks-function #'pele--org-blocks)
+      (pele--inline-disable))))
 
-(defun pele--refresh-org-buffers (&rest _)
-  "Refresh enabled Org buffers after a theme or window size change."
+(defun pele--refresh-inline-buffers (&rest _)
+  "Refresh enabled previews after a theme or window size change."
   (dolist (buffer (buffer-list))
     (with-current-buffer buffer
-      (when pele-org-mode (pele--org-schedule)))))
+      (when pele--inline-blocks-function (pele--inline-schedule)))))
 
-(add-hook 'enable-theme-functions #'pele--refresh-org-buffers)
-(add-hook 'disable-theme-functions #'pele--refresh-org-buffers)
-(add-hook 'window-size-change-functions #'pele--refresh-org-buffers)
+(add-hook 'enable-theme-functions #'pele--refresh-inline-buffers)
+(add-hook 'disable-theme-functions #'pele--refresh-inline-buffers)
+(add-hook 'window-size-change-functions #'pele--refresh-inline-buffers)
+
+(autoload 'pele-markdown-mode "pele-markdown" nil t)
+(autoload 'pele-markdown--source-at-point "pele-markdown")
 
 (provide 'pele)
 ;;; pele.el ends here
