@@ -2,18 +2,29 @@
 
 Edit Mermaid and render SVG diagrams in Emacs with the original [Pele](https://github.com/obsidianmd/pele) engine maintained by kepano / Obsidian.
 
-- Pure Elisp editing mode with the official website's highlighting rules.
-- Standalone previews, live Org previews, SVG export and Org Babel support.
-- A native worker embeds QuickJS and the unmodified Pele bundle. No Mermaid CLI, Node.js, browser, network access or rendering subprocess is required at runtime.
+![Mermaid source highlighting and an inline flowchart preview in Emacs](docs/images/workflow.png)
 
-Pele 1.13.0 and QuickJS 2026-06-04 are vendored. All 33 built-in diagram types are available, including flowcharts, sequence, class, ER, state, Gantt, Git graphs, pie, mindmap, Sankey, radar and treemap. Compatibility and layout follow **Pele**, including its differences from Mermaid.js. This package is currently built from source; prebuilt releases and Windows support are not provided.
+- Edit Mermaid with the official website's highlighting rules, implemented in pure Elisp.
+- Preview diagrams live in Org or in a separate window from any buffer.
+- Export SVG directly or through Org Babel.
+- Render locally in a background worker, with no Mermaid CLI, Node.js or browser required.
 
-## Build and install
+## Diagram gallery
+
+Render flowcharts, sequence and class diagrams, ER diagrams, Gantt charts, mindmaps, pie charts and more. Here are three examples with their source and live Org previews:
+
+![Pie, sequence and class diagrams with source highlighting and inline previews](docs/images/diagrams.png)
+
+Screenshots use Ashen Night, PragmataPro and Org Modern, with an opaque Emacs window background.
+
+## Installation
+
+Build from source on macOS or Linux. Editing and highlighting can also be used on their own, without building the renderer.
 
 Requirements:
 
 - Emacs 29.1+ with dynamic module support; SVG image support for previews.
-- macOS or Linux, a C compiler with pthreads, Make, Python 3.10+ and `emacs-module.h` from your Emacs installation.
+- A C compiler with pthreads, Make, Python 3.10+ and `emacs-module.h` from your Emacs installation.
 - Recommended: `pkg-config` and Pango 1.44+ development files (`pangocairo`) for accurate font measurements. Without Pango, the renderer uses Pele's built-in width estimates.
 
 Install the optional font backend with `brew install pkg-config pango` on Homebrew, or `apt install pkg-config libpango1.0-dev` on Debian/Ubuntu. Then:
@@ -22,7 +33,6 @@ Install the optional font backend with `brew install pkg-config pango` on Homebr
 git clone https://github.com/LuciusChen/pele.el.git ~/repos/pele.el
 cd ~/repos/pele.el
 make -j4
-make check
 ```
 
 If Emacs or its header is elsewhere, use `make EMACS=/path/to/emacs EMACS_INCLUDE=/path/to/include`. Keep the resulting `pele-native.dylib` (macOS) or `pele-native.so` (Linux) alongside `pele.el`.
@@ -35,11 +45,17 @@ Add to your Emacs configuration:
 (add-hook 'org-mode-hook #'pele-org-mode)
 ```
 
-For editing and highlighting alone, require `pele-mode` instead. It needs no native build, Mermaid CLI, Tree-sitter or grammar library. Loading the Lisp files does not load the native renderer until the first render.
+For editing and highlighting alone, require `pele-mode` instead. Loading the Lisp files does not load the native renderer until the first render.
 
-## Use
+## Usage
 
-Open a `.mmd` or `.mermaid` file to enter `pele-mode`. Use `C-c C-p` to preview or `C-c C-e` to export SVG. `M-x pele-preview` and `M-x pele-export` also work on an active region in any buffer, the Org source block at point, or a whole diagram buffer. In a preview, `g` renders again, `s` saves SVG and `q` quits.
+### Source files and regions
+
+Open a `.mmd` or `.mermaid` file to enter `pele-mode`. Use `C-c C-p` to preview or `C-c C-e` to export SVG. In other buffers, select a region of Mermaid source and run `M-x pele-preview` or `M-x pele-export`. With no region, these commands use the Org source block at point or the whole diagram buffer.
+
+In a preview, `g` renders again, `s` saves SVG and `q` quits. Customize `pele-indent-offset` (default 2) and the `pele-highlighting` face group to adjust source editing.
+
+### Org
 
 In Org, `pele-org-mode` shows previews below both `mermaid` and `pele` blocks:
 
@@ -52,9 +68,7 @@ flowchart LR
 
 Previews are overlays and do not modify the file. Edits refresh after 0.2 idle seconds by default. Incomplete input keeps the last successful image; the preview's help text reports the error. Try [examples/gallery.org](examples/gallery.org) and [examples/editor.org](examples/editor.org).
 
-Both Org block languages use `pele-mode` for native source highlighting and `C-c '` editing, unless you have explicitly chosen another source mode. Keep `org-src-fontify-natively` enabled. The highlighter ports the official website's lexical rules, including multiline strings and YAML frontmatter; it does not validate Mermaid syntax. Rendering reports syntax errors and source locations when Pele provides them. Lines over the website's 2,000 UTF-16 code-unit limit are left uncolored, just as on the website.
-
-Indentation covers explicit blocks and branches. Hierarchy-based diagrams such as mindmaps keep their existing indentation. Customize `pele-indent-offset` (default 2) and the `pele-highlighting` face group as needed. The syntax colors follow the website's Flexoki palette, with light and dark variants and no background fill.
+Both block languages use `pele-mode` for native source highlighting and `C-c '` editing, unless you have explicitly chosen another source mode. Keep `org-src-fontify-natively` enabled.
 
 ### Org Babel
 
@@ -122,48 +136,17 @@ Configuration in the diagram source takes precedence over `:config`. Gantt resul
 
 `M-x pele-clear-cache` discards cached results. `M-x pele-shutdown` cancels pending requests and releases the worker; the next render starts it again. Call it before reloading edited Lisp files. **Restart Emacs after rebuilding a loaded native module**: loading Lisp again cannot replace the native binary.
 
-## Architecture and limits
+## Compatibility
 
-```text
-pele-mode.el + pele-font-lock.el       source editing and highlighting
-                  pele.el             API, scheduler, cache, previews and Org
-                     ↓
-            src/pele-module.c         worker owns QuickJS and original Pele
-                     ↓
-              src/bridge.js           font measurements and portable SVG
-                     ↓
-                SVG result           Emacs image, file or Babel (ob-pele.el)
-```
+Diagram syntax and layout follow **Pele**, including its differences from Mermaid.js. Syntax highlighting follows the official website's lexical rules; the renderer reports syntax errors and source locations when available.
 
-Only the Emacs thread calls the Emacs module API. A completion pipe wakes Emacs; a timer provides fallback delivery while requests are pending. Elisp submits at most eight jobs at once to the bounded native queue. Cancellation, deadlines and shutdown share this single request path. No polling runs when there is no pending work.
+External icon libraries and mathematical typesetters are not bundled, so Pele's text fallback applies. Images and clickable links in diagrams are disabled.
 
-The JavaScript runtime has a 128 MiB memory limit. The bridge caps source at 50,000 characters, edges at 5,000 and upstream SVG at 4,000,000 characters. It resolves scoped CSS variables and corner radii for Emacs SVG display while preserving Pele's paths, labels and dimensions. Node fills and label backings remain intact. Diagram images and clickable links are disabled; external icon libraries and mathematical typesetters are not bundled, so Pele's text fallback applies.
+## Development
 
-## Development and verification
+Run `make check` to compile with warnings as errors and run the editor, renderer and diagram corpus tests. See the [development guide](docs/DEVELOPMENT.md) for architecture, limits, reference updates and benchmarks.
 
-```sh
-make check          # compile with warnings as errors; editor, integration and corpus tests
-make test           # editor and renderer integration tests
-make test-corpus    # all 522 documentation examples across 33 diagram types
-
-# Verify the optional build without Pango:
-make clean
-make -j4 check PANGO_LIBS= PANGO_CFLAGS=
-```
-
-Run `make clean` before changing font backends, then rebuild normally to restore Pango. Linux CI checks both builds. Rendering tests use Emacs module assertions and cover cancellation, deadlines, queueing, recovery, cache behavior, preview cleanup, themes and Babel. The corpus checks the generated SVG as XML and compares type, dimensions, paths and text to the original engine using identical width estimates. It also exercises all examples with the default font backend.
-
-The pure Elisp editor suite can run independently of the native build:
-
-```sh
-emacs -Q --batch -L . -L test -l pele-mode-tests -l pele-highlighting-tests -f ert-run-tests-batch-and-exit
-```
-
-Highlighting tests compare actual Emacs face ranges and edit sequences to reference output from the unmodified website highlighter, and verify its source hashes. To update references, use `node scripts/update-highlighting.mjs` (Node must provide `node:module.stripTypeScriptTypes`) and `node scripts/update-corpus.mjs` for rendering references. Node is only a development tool for regenerating these files.
-
-Keep the vendored engines unmodified and pinned. Update the website source, Elisp port and highlighting reference together. Keep editing independent of rendering, and use the existing API and worker for integrations. Add regression tests for observable failures; avoid a second Mermaid parser or new abstractions without a concrete need.
-
-For local timing, run `emacs -Q --batch -L . -l scripts/benchmark.el`. Results go to `test/output/performance.json` with normal GC settings. The measurements cover rendering, cache delivery, fontification and edits; GUI rasterization, redisplay, Emacs startup and the idle preview delay are excluded.
+Current dependency versions and source hashes are recorded in [vendor/README.md](vendor/README.md). Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
