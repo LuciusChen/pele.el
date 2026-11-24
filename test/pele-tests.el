@@ -304,6 +304,7 @@
     (should (equal "flowchart LR\nA --> B\n" (pele--source-at-point)))))
 
 (ert-deftest pele-org-supports-pele-source-blocks ()
+  (skip-unless (image-type-available-p 'svg))
   (with-temp-buffer
     (org-mode)
     (insert "#+begin_src pele\nflowchart LR\nA --> B\n#+end_src\n")
@@ -347,6 +348,7 @@
       (should (equal '(74) cancelled)))))
 
 (ert-deftest pele-org-preview-keeps-buffer-unmodified ()
+  (skip-unless (image-type-available-p 'svg))
   (with-temp-buffer
     (org-mode)
     (insert "#+begin_src mermaid\nflowchart LR\nA --> B\n#+end_src\n")
@@ -361,6 +363,7 @@
       (pele-org-mode -1))))
 
 (ert-deftest pele-org-input-after-preview-stays-below-image ()
+  (skip-unless (image-type-available-p 'svg))
   (dolist (tail '("" "\n\n" " \t" "\n \t\nNext paragraph\n"))
     (with-temp-buffer
       (org-mode)
@@ -385,6 +388,7 @@
           (pele-org-mode -1))))))
 
 (ert-deftest pele-org-retains-last-image-on-incomplete-input ()
+  (skip-unless (image-type-available-p 'svg))
   (with-temp-buffer
     (org-mode)
     (insert "#+begin_src mermaid\nflowchart LR\nA --> B\n#+end_src\n")
@@ -399,6 +403,7 @@
       (pele-org-mode -1))))
 
 (ert-deftest pele-org-cleans-up-removed-blocks ()
+  (skip-unless (image-type-available-p 'svg))
   (with-temp-buffer
     (org-mode)
     (insert "#+begin_src mermaid\ninfo\n#+end_src\n")
@@ -410,6 +415,7 @@
       (pele-org-mode -1))))
 
 (ert-deftest pele-org-cleans-up-on-major-mode-change ()
+  (skip-unless (image-type-available-p 'svg))
   (with-temp-buffer
     (org-mode)
     (insert "#+begin_src mermaid\ninfo\n#+end_src\n")
@@ -418,7 +424,19 @@
       (fundamental-mode)
       (should-not (overlay-buffer overlay)))))
 
+(ert-deftest pele-org-initial-render-error-restores-editor-state ()
+  (with-temp-buffer
+    (org-mode)
+    (insert "#+begin_src mermaid\ninfo\n#+end_src\n")
+    (cl-letf (((symbol-function 'pele-render-async) (lambda (&rest _) (error "Unavailable renderer"))))
+      (should-error (pele-org-mode 1)))
+    (should-not pele-org-mode)
+    (should-not pele--inline-overlays)
+    (should-not (local-variable-p 'mwheel-scroll-up-function))
+    (should-not (memq #'pele--inline-after-command post-command-hook))))
+
 (ert-deftest pele-many-previews-respect-native-queue-bound ()
+  (skip-unless (image-type-available-p 'svg))
   (with-temp-buffer
     (org-mode)
     (dotimes (i 45)

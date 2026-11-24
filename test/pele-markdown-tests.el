@@ -93,7 +93,17 @@
     (pele-markdown-mode 1)
     (should-not pele--inline-overlays)))
 
+(pele-markdown-test--deftest initial-render-error-restores-editor-state
+  (insert "```mermaid\ninfo\n```\n")
+  (cl-letf (((symbol-function 'pele-render-async) (lambda (&rest _) (error "Unavailable renderer"))))
+    (should-error (pele-markdown-mode 1)))
+  (should-not pele-markdown-mode)
+  (should-not pele--inline-overlays)
+  (should-not (local-variable-p 'mwheel-scroll-up-function))
+  (should-not (memq #'pele--inline-after-command post-command-hook)))
+
 (pele-markdown-test--deftest input-after-preview-stays-below-image
+  (skip-unless (image-type-available-p 'svg))
   (dolist (tail '("" "\n\n" " \t" "\n \t\nNext paragraph\n"))
     (erase-buffer)
     (insert "```mermaid\ninfo\n```\n")
@@ -115,6 +125,7 @@
     (pele-markdown-mode -1)))
 
 (pele-markdown-test--deftest retains-last-image-and-recovers-after-edit
+  (skip-unless (image-type-available-p 'svg))
   (insert "```mermaid\nflowchart LR\nA-->B\n```\n")
   (pele-markdown-mode 1) (pele-markdown-test--wait)
   (let* ((overlay (car pele--inline-overlays))
@@ -131,6 +142,7 @@
     (should (string-search ">C<" (plist-get (overlay-get overlay 'pele-result) :svg)))))
 
 (pele-markdown-test--deftest unchanged-blocks-keep-their-previews
+  (skip-unless (image-type-available-p 'svg))
   (insert "# Diagram\n\n```mermaid\ninfo\n```\n")
   (let ((render (symbol-function 'pele-render-async)) (calls 0))
     (cl-letf (((symbol-function 'pele-render-async)
@@ -143,6 +155,7 @@
         (should (eq overlay (car pele--inline-overlays)))))))
 
 (pele-markdown-test--deftest deleted-or-relabeled-blocks-are-cleaned-up
+  (skip-unless (image-type-available-p 'svg))
   (insert "```mermaid\ninfo\n```\n\n~~~mermaid\ninfo\n~~~\n")
   (pele-markdown-mode 1) (pele-markdown-test--wait)
   (should (= 2 (length pele--inline-overlays)))
@@ -155,6 +168,7 @@
   (should-not pele--inline-overlays))
 
 (pele-markdown-test--deftest narrowed-buffer-still-previews-all-blocks
+  (skip-unless (image-type-available-p 'svg))
   (insert "```mermaid\ninfo\n```\n\n~~~mermaid\ninfo\n~~~\n")
   (narrow-to-region (point-min) (+ (point-min) 5))
   (pele-markdown-mode 1) (pele-markdown-test--wait)
@@ -182,6 +196,7 @@
       (should-not (memq #'pele--inline-schedule after-change-functions)))))
 
 (pele-markdown-test--deftest major-mode-change-removes-previews
+  (skip-unless (image-type-available-p 'svg))
   (insert "```mermaid\ninfo\n```\n")
   (pele-markdown-mode 1) (pele-markdown-test--wait)
   (let ((overlay (car pele--inline-overlays)))
@@ -192,6 +207,7 @@
     (should-not pele--inline-blocks-function)))
 
 (pele-markdown-test--deftest disabling-org-mode-leaves-markdown-previews-alone
+  (skip-unless (image-type-available-p 'svg))
   (insert "```mermaid\ninfo\n```\n")
   (pele-markdown-mode 1) (pele-markdown-test--wait)
   (let ((overlay (car pele--inline-overlays)))
@@ -201,6 +217,7 @@
     (should (eq pele--inline-blocks-function #'pele-markdown--blocks))))
 
 (ert-deftest pele-markdown-disabling-markdown-mode-leaves-org-previews-alone ()
+  (skip-unless (image-type-available-p 'svg))
   (require 'org)
   (with-temp-buffer
     (org-mode)
@@ -234,6 +251,7 @@
                    (plist-get (car (pele-markdown--blocks)) :source)))))
 
 (ert-deftest pele-markdown-supports-gfm-mode ()
+  (skip-unless (image-type-available-p 'svg))
   (skip-unless (pele-markdown-test--available-p 'markdown-mode))
   (with-temp-buffer
     (gfm-mode)

@@ -68,11 +68,15 @@ If Emacs or its header is elsewhere, use `make EMACS=/path/to/emacs EMACS_INCLUD
 
 Org and Markdown live previews appear below each Mermaid block without modifying the file. Edits refresh after `pele-preview-delay` (0.2 idle seconds by default). Incomplete input keeps the last successful image; the preview's help text reports the error. Disabling the preview mode removes its images and cancels pending work.
 
+Previews shrink proportionally to fit both the window's width and height; small diagrams keep their original size. Resizing a window updates the fit. If the same buffer appears in multiple windows, the preview fits the smallest available dimensions.
+
+Use the up/down arrow keys, `C-p`/`C-n`, or Meow/Evil's `j`/`k` to move onto a preview and continue past it. Numeric prefixes, selections and Evil operators keep their normal behavior. Neither modal editor is required. With the cursor on the image, press `RET` to open the original-size SVG in Emacs's image viewer. Its arrow keys pan the image, `+`/`-` zoom and `q` returns to the source. Outside the image, typing and `RET` keep their normal editing behavior. Preview focus adds no characters or undo entries to the source buffer. Clicking an image also opens the viewer.
+
 ### Source files and regions
 
 Open a `.mmd` or `.mermaid` file to enter `pele-mode`. Use `C-c C-p` to preview or `C-c C-e` to export SVG. In other buffers, select a region of Mermaid source and run `M-x pele-preview` or `M-x pele-export`. With no region, these commands use the Org or Markdown code block at point, or the whole diagram buffer.
 
-In a preview, `g` renders again, `s` saves SVG and `q` quits. Customize `pele-indent-offset` (default 2) and the `pele-highlighting` face group to adjust source editing.
+In a standalone preview, `g` renders again, `s` saves SVG, `RET` opens the original-size image and `q` quits. Customize `pele-indent-offset` (default 2) and the `pele-highlighting` face group to adjust source editing.
 
 ### Org
 
@@ -104,6 +108,8 @@ sequenceDiagram
 ```
 
 `:file` is required and must end in `.svg`. Optional `:width` and `:font-size` use pixels. Org's normal Babel execution and confirmation settings apply.
+
+While `pele-org-mode` is enabled, the live preview takes the place of the block's inline result image. Babel result links and SVG files remain available for saving and export; they update when you execute the block. Disabling the mode restores result images that Org was displaying. Other inline images are unaffected.
 
 To handle existing `mermaid` Babel blocks, call `(pele-babel-enable-mermaid)` explicitly. If using `ob-mermaid`, load it first. `(pele-babel-disable-mermaid)` restores the execution function saved when the override was enabled. Requiring `ob-pele` alone leaves other Babel backends in place.
 

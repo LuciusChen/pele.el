@@ -163,7 +163,10 @@ Previews are overlays and do not modify the Markdown file."
             (progn
               (when (called-interactively-p 'interactive) (pele--ensure-module t))
               (pele--inline-enable #'pele-markdown--blocks))
-          (error (setq pele-markdown-mode nil) (signal (car err) (cdr err)))))
+          (error
+           (pele--inline-disable)
+           (setq pele-markdown-mode nil)
+           (signal (car err) (cdr err)))))
     (when (eq pele--inline-blocks-function #'pele-markdown--blocks)
       (pele--inline-disable))))
 

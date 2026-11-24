@@ -34,6 +34,12 @@
 (declare-function org-element-property "org-element" (property element))
 (declare-function org-element-parse-buffer "org-element" (&optional granularity visible-only))
 (declare-function org-element-map "org-element" (data types fun &optional info first-match no-recursion with-affiliated))
+(declare-function org-babel-where-is-src-block-result "ob-core" (&optional insert info hash))
+(declare-function org-babel-result-end "ob-core" ())
+(declare-function image-mode "image-mode" ())
+(declare-function evil-emacs-state "evil-states" (&optional arg))
+(defvar image-auto-resize)
+(defvar mwheel-scroll-up-function)
 
 (defgroup pele nil "Mermaid SVG previews with Pele." :group 'multimedia)
 
@@ -403,20 +409,50 @@ Interactive previews use the asynchronous API instead."
 
 (defun pele--window-width ()
   "Return the pixel width available for a diagram."
-  (max 100 (- (window-body-width (or (get-buffer-window (current-buffer) t)
-                                    (selected-window)) t) 16)))
+  (max 1 (- (apply #'min (mapcar (lambda (window) (window-body-width window t))
+                                (or (get-buffer-window-list nil nil t)
+                                    (list (selected-window))))) 16)))
 
-(defun pele--image (result &optional width)
-  "Create an Emacs image for RESULT, optionally limited to WIDTH pixels."
+(defun pele--window-height ()
+  "Return the pixel height available for an inline diagram.
+Leave room for its surrounding newlines and the cursor below it."
+  (max 1 (- (apply #'min (mapcar (lambda (window) (window-body-height window t))
+                                (or (get-buffer-window-list nil nil t)
+                                    (list (selected-window)))))
+            (* 3 (default-line-height)))))
+
+(defun pele--image (result &optional width height)
+  "Create an image for RESULT that fits WIDTH and HEIGHT, in pixels.
+Default to the available window size.  Preserve aspect ratio; never enlarge."
   (unless (image-type-available-p 'svg) (user-error "This Emacs has no SVG image support"))
-  (create-image (plist-get result :svg) 'svg t
-                :width (min (round (plist-get result :width)) (or width (pele--window-width)))
-                :scale 1.0))
+  (let* ((natural-width (plist-get result :width))
+         (scale (min 1.0 (/ (float (or width (pele--window-width))) natural-width)
+                     (/ (float (or height (pele--window-height)))
+                        (plist-get result :height)))))
+    (create-image (plist-get result :svg) 'svg t
+                  :width (max 1 (floor (* natural-width scale))) :scale 1.0)))
+
+(defun pele--view-image (result)
+  "Open RESULT at its original size using Emacs's image viewer."
+  (require 'image-mode)
+  (let ((buffer (get-buffer-create "*Pele Image*")))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (fundamental-mode)
+        (buffer-disable-undo)
+        (erase-buffer)
+        (insert (plist-get result :svg))
+        (let ((image-auto-resize nil)) (image-mode))
+        (when (bound-and-true-p evil-local-mode) (evil-emacs-state))
+        (setq buffer-read-only t)
+        (set-buffer-modified-p nil)))
+    (pop-to-buffer buffer '((display-buffer-same-window)))))
 
 (defvar pele-preview-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "g") #'pele-preview-refresh)
     (define-key map (kbd "s") #'pele-preview-save)
+    (define-key map (kbd "RET") #'pele-preview-open)
     map))
 
 (defvar-local pele--preview-source nil)
@@ -449,14 +485,19 @@ Interactive previews use the asynchronous API instead."
                (with-current-buffer buffer
                  (setq pele--preview-request nil)
                  (if (plist-get result :ok)
-                     (let ((inhibit-read-only t))
+                     (progn
                        (setq pele--preview-result result header-line-format nil)
-                       (erase-buffer)
-                       (insert-image (pele--image result width))
-                       (goto-char (point-min)))
+                       (pele--preview-display))
                    (setq header-line-format
                          (concat " " (plist-get (plist-get result :error) :message)))))))
            (list :max-width width)))))
+
+(defun pele--preview-display ()
+  "Fit the standalone preview's cached image to its window."
+  (let ((inhibit-read-only t))
+    (erase-buffer)
+    (insert-image (pele--image pele--preview-result))
+    (goto-char (point-min))))
 
 (defun pele-preview-save (file)
   "Save the displayed SVG to FILE."
@@ -465,6 +506,12 @@ Interactive previews use the asynchronous API instead."
   (let ((coding-system-for-write 'utf-8-unix))
     (with-temp-file file (insert (plist-get pele--preview-result :svg))))
   (message "Saved %s" file))
+
+(defun pele-preview-open ()
+  "Open the displayed diagram at its original size."
+  (interactive)
+  (unless pele--preview-result (user-error "No successful rendering to open"))
+  (pele--view-image pele--preview-result))
 
 ;;;###autoload
 (defun pele-preview ()
@@ -490,15 +537,208 @@ Interactive previews use the asynchronous API instead."
 (defvar-local pele--inline-overlays nil)
 (defvar-local pele--inline-timer nil)
 (defvar-local pele--inline-blocks-function nil)
+(defvar-local pele--inline-focus nil)
+(defvar-local pele--inline-below nil)
+(defvar-local pele--inline-focus-exit nil)
+(defvar-local pele--inline-wheel nil)
+(defvar pele--inline-moving nil)
+
+(defconst pele--inline-motions
+  '((next-line 1) (previous-line -1)
+    (meow-next 1 meow) (meow-prev -1 meow)
+    (evil-next-line 1 evil) (evil-previous-line -1 evil)
+    (evil-next-visual-line 1 evil) (evil-previous-visual-line -1 evil))
+  "Motion commands with their direction and optional providing feature.")
+
+(defvar pele--inline-focus-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'pele-inline-open)
+    map))
+
+(defvar pele--inline-image-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [mouse-1] #'pele-inline-open)
+    map))
+
+(defun pele--inline-display (overlay)
+  "Display OVERLAY's cached result at the current window size."
+  (when-let* ((result (overlay-get overlay 'pele-result)))
+    (let ((size (cons (pele--window-width) (pele--window-height))))
+      (unless (equal size (overlay-get overlay 'pele-size))
+        (overlay-put overlay 'pele-image (pele--image result (car size) (cdr size)))
+        (overlay-put overlay 'pele-size size)))
+    (let* ((focused (eq overlay pele--inline-focus))
+           (image (overlay-get overlay 'pele-image))
+           (text (concat "\n" (propertize " " 'display image 'cursor focused
+                                        'keymap pele--inline-image-map 'pele-overlay overlay)
+                         "\n"
+                         (propertize " " 'display '(space :width 0) 'cursor
+                                     (and (not focused)
+                                          (or (eq overlay pele--inline-below)
+                                              (eq (char-before (overlay-start overlay)) ?\n)))))))
+      ;; A virtual cursor below the image keeps normal insertion below it.
+      ;; Focus moves it onto the image without adding any buffer characters.
+      (overlay-put overlay 'after-string
+                   (propertize text 'line-prefix "" 'wrap-prefix "")))))
+
+(defun pele--inline-unfocus ()
+  "Leave the focused preview and remove its temporary keymap."
+  (when pele--inline-focus-exit
+    (let ((exit pele--inline-focus-exit))
+      (setq pele--inline-focus-exit nil)
+      (funcall exit))))
+
+(defun pele--inline-focus (overlay)
+  "Put the keyboard cursor on OVERLAY's image."
+  (pele--inline-unfocus)
+  (setq pele--inline-focus overlay pele--inline-below nil)
+  (goto-char (overlay-start overlay))
+  (pele--inline-display overlay)
+  (set-window-vscroll nil 0 t)
+  (set-window-start nil (save-excursion
+                         (if (bolp) (forward-line -1) (beginning-of-line))
+                         (point)))
+  (let ((buffer (current-buffer)) (window (selected-window)))
+    (setq pele--inline-focus-exit
+          (set-transient-map
+           pele--inline-focus-map
+           (lambda ()
+             (and (eq buffer (current-buffer)) (eq window (selected-window))
+                  (eq overlay pele--inline-focus)
+                  (or (assq this-command pele--inline-motions)
+                      (eq this-command 'pele-inline-open))))
+           (lambda ()
+             (when (buffer-live-p buffer)
+               (with-current-buffer buffer
+                 (setq pele--inline-focus nil pele--inline-focus-exit nil
+                       pele--inline-below overlay)
+                 (when (overlay-buffer overlay) (pele--inline-display overlay)))))))))
+
+(defun pele--inline-leave (direction)
+  "Leave the focused preview in DIRECTION."
+  (let ((overlay pele--inline-focus))
+    (goto-char (overlay-start overlay))
+    (pele--inline-unfocus)
+    (when (< direction 0)
+      (setq pele--inline-below nil)
+      (pele--inline-display overlay)
+      (when (bolp) (forward-line -1))
+      (end-of-line))))
+
+(defun pele-inline-open (&optional event)
+  "Open the focused or clicked preview at its original size."
+  (interactive (list (when (mouse-event-p last-input-event) last-input-event)))
+  (let* ((position (and event (event-start event)))
+         (string (and position (posn-string position)))
+         (overlay (if string (get-text-property (cdr string) 'pele-overlay (car string))
+                    pele--inline-focus))
+         (result (and overlay (overlay-get overlay 'pele-result))))
+    (unless result (user-error "No preview selected"))
+    (when position (select-window (posn-window position)))
+    (pele--inline-unfocus)
+    (pele--view-image result)))
+
+(defun pele--inline-eof-preview ()
+  "Return a preview with an image at the accessible end of the buffer."
+  (seq-find (lambda (overlay)
+              (and (= (overlay-start overlay) (point-max))
+                   (overlay-get overlay 'pele-result)))
+            pele--inline-overlays))
+
+(defun pele--inline-move (direction original &rest args)
+  "Call ORIGINAL with ARGS, handling single-step preview motion in DIRECTION.
+Modal commands may call native motions themselves.  Handle only the outer
+motion, and leave counts, selections, operators and programmatic calls alone."
+  (if (or (not pele--inline-blocks-function) pele--inline-moving
+          ;; Modal commands can rewrite `this-command' during their motion.
+          (not (assq real-this-command pele--inline-motions))
+          (not (memq (car args) '(nil 1))) (region-active-p)
+          (memq (bound-and-true-p evil-state) '(visual operator)))
+      (apply original args)
+    (let* ((pele--inline-moving t)
+           (before (point)) (below pele--inline-below)
+           (eof (and (> direction 0) (= (line-end-position) (point-max))
+                     (not (eq (char-before (point-max)) ?\n))
+                     (pele--inline-eof-preview))))
+      (cond
+       (pele--inline-focus (pele--inline-leave direction))
+       ((and eof (not (eq eof below))) (pele--inline-focus eof))
+       (t
+        (prog1 (apply original args)
+          (when-let* ((overlay
+                       (seq-find
+                        (lambda (overlay)
+                          (let ((end (overlay-start overlay)))
+                            (and (overlay-get overlay 'pele-result)
+                                 (if (> direction 0)
+                                     (and (< before end) (>= (point) end))
+                                   (or (and (> before end) (< (point) end))
+                                       (and (= before end) (<= (point) end)
+                                            (or (eq below overlay)
+                                                (eq (char-before end) ?\n))))))))
+                        pele--inline-overlays)))
+            (pele--inline-focus overlay))))))))
+
+(defun pele--inline-advise-motions (&optional feature)
+  "Route FEATURE's commands through the shared preview motion handler."
+  (dolist (motion pele--inline-motions)
+    (when (eq (nth 2 motion) feature)
+      (advice-add (car motion) :around
+                  (apply-partially #'pele--inline-move (cadr motion))
+                  '((name . pele-inline-motion))))))
+
+(defun pele--inline-evil-cursor (original &rest args)
+  "Keep Evil's cursor adjustment from leaving a virtual preview position."
+  (unless (and (memq (bound-and-true-p evil-state) '(normal motion))
+               (let ((overlay (or pele--inline-focus pele--inline-below)))
+                 (and overlay (= (point) (overlay-start overlay)))))
+    (apply original args)))
+
+(pele--inline-advise-motions)
+(with-eval-after-load 'meow
+  (when (fboundp 'pele--inline-advise-motions)
+    (pele--inline-advise-motions 'meow)))
+(with-eval-after-load 'evil
+  (when (fboundp 'pele--inline-advise-motions)
+    (pele--inline-advise-motions 'evil)
+    (advice-add 'evil-adjust-cursor :around #'pele--inline-evil-cursor
+                '((name . pele-inline-cursor)))))
+
+(defun pele--inline-scroll-up (&rest args)
+  "Scroll normally, ending mwheel's retry loop when the window cannot advance."
+  (condition-case nil
+      (let ((start (window-start)) (vscroll (window-vscroll nil t)))
+        (prog1 (apply (cdr pele--inline-wheel) args)
+          ;; Emacs can return successfully without moving at an EOF after-string.
+          ;; mwheel otherwise retries that same state indefinitely.
+          (when (and (= start (window-start)) (= vscroll (window-vscroll nil t)))
+            (signal 'end-of-buffer nil))))
+    (end-of-buffer
+     (when-let* ((overlay (pele--inline-eof-preview)))
+       (setq pele--inline-below overlay)
+       (goto-char (overlay-start overlay))
+       (pele--inline-display overlay)
+       (set-window-vscroll nil 0 t)
+       (set-window-start nil (point)))
+     (signal 'end-of-buffer nil))))
+
+(defun pele--inline-after-command ()
+  "Discard a virtual below-image cursor after point leaves its anchor."
+  (when (and pele--inline-below (/= (point) (overlay-start pele--inline-below)))
+    (let ((overlay pele--inline-below))
+      (setq pele--inline-below nil)
+      (pele--inline-display overlay))))
 
 (defun pele--inline-delete (overlay)
   "Remove OVERLAY and cancel its pending rendering."
+  (when (eq overlay pele--inline-focus) (pele--inline-unfocus))
+  (when (eq overlay pele--inline-below) (setq pele--inline-below nil))
   (when-let* ((id (overlay-get overlay 'pele-request))) (pele-cancel id))
   (when-let* ((marker (overlay-get overlay 'pele-begin))) (set-marker marker nil))
   (delete-overlay overlay))
 
-(defun pele--inline-update (overlay source options width)
-  "Update OVERLAY for SOURCE, OPTIONS and available WIDTH."
+(defun pele--inline-update (overlay source options)
+  "Update OVERLAY for SOURCE and render OPTIONS."
   (let ((key (concat source "\0" (pele--options-json options)))
         (buffer (current-buffer)))
     (unless (equal key (overlay-get overlay 'pele-key))
@@ -516,10 +756,9 @@ Interactive previews use the asynchronous API instead."
               (if (plist-get result :ok)
                   (progn
                     (overlay-put overlay 'pele-result result)
+                    (overlay-put overlay 'pele-size nil)
                     (overlay-put overlay 'help-echo "Mermaid preview")
-                    (overlay-put overlay 'after-string
-                                 (concat "\n" (propertize " " 'display
-                                                          (pele--image result width)) "\n")))
+                    (pele--inline-display overlay))
                 (let ((message (plist-get (plist-get result :error) :message)))
                   (overlay-put overlay 'help-echo message)
                   (unless (overlay-get overlay 'pele-result)
@@ -556,12 +795,15 @@ Interactive previews use the asynchronous API instead."
                     (overlay-put overlay 'pele-begin (copy-marker begin)))
                   (move-overlay overlay end end)
                   (pele--inline-update overlay (plist-get block :source)
-                                       (list :max-width width) width)))
+                                       (list :max-width width))
+                  (pele--inline-display overlay)))
             (mapc #'pele--inline-delete old)
             (setq pele--inline-overlays (nreverse pele--inline-overlays))))))))
 
-(defun pele--inline-schedule (&rest _)
+(defun pele--inline-schedule (&rest change)
   "Schedule a refresh of the current buffer's previews."
+  ;; Layout notifications from modal mode lines must not dismiss image focus.
+  (when change (pele--inline-unfocus))
   (when pele--inline-timer (cancel-timer pele--inline-timer))
   (let ((buffer (current-buffer)))
     (setq pele--inline-timer
@@ -572,6 +814,16 @@ Interactive previews use the asynchronous API instead."
 
 (defun pele--inline-disable ()
   "Remove the current buffer's previews, hooks and pending work."
+  (pele--inline-unfocus)
+  (when (eq pele--inline-blocks-function #'pele--org-blocks)
+    (pele--org-display-results nil))
+  (remove-hook 'post-command-hook #'pele--inline-after-command t)
+  (when pele--inline-wheel
+    (when (eq mwheel-scroll-up-function #'pele--inline-scroll-up)
+      (if (car pele--inline-wheel)
+          (setq mwheel-scroll-up-function (cdr pele--inline-wheel))
+        (kill-local-variable 'mwheel-scroll-up-function)))
+    (setq pele--inline-wheel nil))
   (remove-hook 'after-change-functions #'pele--inline-schedule t)
   (remove-hook 'kill-buffer-hook #'pele--inline-disable t)
   (remove-hook 'change-major-mode-hook #'pele--inline-disable t)
@@ -584,33 +836,91 @@ Interactive previews use the asynchronous API instead."
   "Enable previews for blocks returned by COLLECTOR.
 Each block is a plist with :begin, :end and :source."
   (pele--inline-disable)
+  (require 'mwheel)
+  (setq pele--inline-wheel (cons (local-variable-p 'mwheel-scroll-up-function)
+                                 mwheel-scroll-up-function))
+  (setq-local mwheel-scroll-up-function #'pele--inline-scroll-up)
   (setq pele--inline-blocks-function collector)
+  (add-hook 'post-command-hook #'pele--inline-after-command nil t)
   (add-hook 'after-change-functions #'pele--inline-schedule nil t)
   (add-hook 'kill-buffer-hook #'pele--inline-disable nil t)
   (add-hook 'change-major-mode-hook #'pele--inline-disable nil t)
   (pele--inline-refresh))
 
+(defun pele--org-display-results (regions)
+  "Suppress Org result images in REGIONS, restoring any outside them.
+Keep Org's overlays so its image toggles and refreshes retain ownership.
+Only their display properties change; links, files and undo stay intact."
+  (dolist (overlay (let ((lists (overlay-lists))) (append (car lists) (cdr lists))))
+    (let ((saved (overlay-get overlay 'pele-org-image)))
+      (if (and (overlay-get overlay 'org-image-overlay)
+               (seq-some (lambda (region)
+                           (and (<= (car region) (overlay-start overlay))
+                                (<= (overlay-end overlay) (cdr region))))
+                         regions))
+          (when (eq (car-safe (overlay-get overlay 'display)) 'image)
+            ;; Org may have replaced the image since the last refresh.
+            (overlay-put overlay 'pele-org-image
+                         (mapcar (lambda (property)
+                                   (cons property (overlay-get overlay property)))
+                                 '(display before-string face keymap)))
+            (dolist (property '(display before-string face keymap))
+              (overlay-put overlay property nil)))
+        (when saved
+          (dolist (entry saved) (overlay-put overlay (car entry) (cdr entry)))
+          (overlay-put overlay 'pele-org-image nil))))))
+
 (defun pele--org-blocks ()
-  "Collect Mermaid Org blocks for inline preview."
+  "Collect Mermaid Org blocks and suppress their duplicate result images."
   (require 'org-element)
-  (org-element-map (org-element-parse-buffer) 'src-block
-    (lambda (element)
-      (when (pele--language-p (org-element-property :language element))
-        (list :begin (org-element-property :begin element)
-              :end (save-excursion
-                     ;; Org's :end includes following blank lines. Keep the
-                     ;; preview at the closing line so input stays below it.
-                     (goto-char (org-element-property :end element))
-                     (skip-chars-backward " \t\r\n")
-                     (forward-line 1)
-                     (point))
-              :source (org-element-property :value element))))))
+  (require 'ob-core)
+  (let (regions)
+    (prog1
+        (org-element-map (org-element-parse-buffer) 'src-block
+          (lambda (element)
+            (when (pele--language-p (org-element-property :language element))
+              (save-excursion
+                (goto-char (org-element-property :begin element))
+                (when-let* ((result (org-babel-where-is-src-block-result)))
+                  (goto-char result)
+                  (forward-line 1)
+                  (push (cons (point) (org-babel-result-end)) regions)))
+              (list :begin (org-element-property :begin element)
+                    :end (save-excursion
+                           ;; Org's :end includes following blank lines. Keep the
+                           ;; preview at the closing line so input stays below it.
+                           (goto-char (org-element-property :end element))
+                           (skip-chars-backward " \t\r\n")
+                           (forward-line 1)
+                           (point))
+                    :source (org-element-property :value element)))))
+      (pele--org-display-results regions))))
+
+(defun pele--org-after-images (&optional buffer &rest _)
+  "Deduplicate Org images after an image refresh, possibly in BUFFER."
+  (let ((buffer (if (bufferp buffer) buffer (current-buffer))))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (when (eq pele--inline-blocks-function #'pele--org-blocks)
+          (save-excursion
+            (save-restriction
+              (widen)
+              (pele--org-blocks))))))))
+
+(with-eval-after-load 'org
+  (when (fboundp 'pele--org-after-images)
+    ;; Org 9.8 also creates previews in asynchronous batches.
+    (dolist (function '(org-display-inline-images org-link-preview--process-queue))
+      (when (fboundp function)
+        (advice-add function :after #'pele--org-after-images
+                    '((name . pele-org-results)))))))
 
 ;;;###autoload
 (define-minor-mode pele-org-mode
   "Show live SVG previews beneath Mermaid source blocks.
 Editing leaves the last successful image visible until a new one is ready.
-Previews are overlays and do not modify the Org file."
+Hide duplicate Babel result images while enabled, retaining their links
+and files.  Previews are overlays and do not modify the Org file."
   :lighter " Pele"
   (if pele-org-mode
       (progn
@@ -621,7 +931,10 @@ Previews are overlays and do not modify the Org file."
             (progn
               (when (called-interactively-p 'interactive) (pele--ensure-module t))
               (pele--inline-enable #'pele--org-blocks))
-          (error (setq pele-org-mode nil) (signal (car err) (cdr err)))))
+          (error
+           (pele--inline-disable)
+           (setq pele-org-mode nil)
+           (signal (car err) (cdr err)))))
     (when (eq pele--inline-blocks-function #'pele--org-blocks)
       (pele--inline-disable))))
 
@@ -629,11 +942,33 @@ Previews are overlays and do not modify the Org file."
   "Refresh enabled previews after a theme or window size change."
   (dolist (buffer (buffer-list))
     (with-current-buffer buffer
-      (when pele--inline-blocks-function (pele--inline-schedule)))))
+      (when pele--inline-blocks-function (pele--inline-schedule))
+      (when (and (derived-mode-p 'pele-preview-mode) pele--preview-result
+                 (get-buffer-window buffer t))
+        (pele--preview-display)))))
 
 (add-hook 'enable-theme-functions #'pele--refresh-inline-buffers)
 (add-hook 'disable-theme-functions #'pele--refresh-inline-buffers)
 (add-hook 'window-size-change-functions #'pele--refresh-inline-buffers)
+
+(defun pele-unload-function ()
+  "Remove preview state and motion advice before unloading Pele."
+  (dolist (buffer (buffer-list))
+    (with-current-buffer buffer
+      (when pele--inline-blocks-function
+        (pele--inline-disable)
+        (setq pele-org-mode nil)
+        (when (boundp 'pele-markdown-mode) (setq pele-markdown-mode nil)))))
+  (dolist (entry pele--inline-motions)
+    (advice-remove (car entry) 'pele-inline-motion))
+  (advice-remove 'evil-adjust-cursor 'pele-inline-cursor)
+  (dolist (function '(org-display-inline-images org-link-preview--process-queue))
+    (advice-remove function 'pele-org-results))
+  (dolist (hook '(enable-theme-functions disable-theme-functions window-size-change-functions))
+    (remove-hook hook #'pele--refresh-inline-buffers))
+  (remove-hook 'kill-emacs-hook #'pele-shutdown)
+  (pele-shutdown)
+  nil)
 
 (autoload 'pele-markdown-mode "pele-markdown" nil t)
 (autoload 'pele-markdown--source-at-point "pele-markdown")

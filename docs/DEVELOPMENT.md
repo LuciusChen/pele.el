@@ -47,6 +47,10 @@ Highlighting tests compare actual Emacs face ranges and edit sequences to refere
 
 For an optional GUI rasterization check, run `emacs -Q -L . -l test/pele-gui-test.el`. It opens the Org gallery in a separate Emacs and writes actual image dimensions and errors to `test/output/gui-results.json`.
 
+Run the inline interaction regressions in a separate graphical Emacs with `emacs -Q -L . -L test -l pele-inline-tests --eval '(ert-run-tests-interactively "pele-inline-")'`. They cover EOF navigation with and without a final newline, normal editing and undo, width/height fitting, window resizing, wheel termination, the native image viewer and Org result-image deduplication. Add the Markdown mode directory to `load-path` to include its keyboard checks.
+
+Optional modal tests use real Meow and Evil from `load-path`, including their command hooks, selections, counts, operators and rebound keys. Motion advice handles only single-step user commands in preview buffers. A dynamic guard prevents a modal command and its nested native motion from handling the same preview twice. Layout notifications preserve focus; source edits dismiss it. Evil's cursor adjustment skips virtual preview positions, and the full-size image buffer uses Emacs state. Unloading Pele removes its motion advice.
+
 Keep the vendored engines unmodified and pinned. Update the website source, Elisp port and highlighting reference together. Keep editing independent of rendering, and use the existing API and worker for integrations. Add regression tests for observable failures; avoid a second Mermaid parser or new abstractions without a concrete need.
 
 For local timing, run `emacs -Q --batch -L . -l scripts/benchmark.el`. Results go to `test/output/performance.json` with normal GC settings. The measurements cover rendering, cache delivery, fontification and edits; GUI rasterization, redisplay, Emacs startup and the idle preview delay are excluded.

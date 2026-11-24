@@ -2,7 +2,11 @@
 
 ## Unreleased
 
+- Fit previews to both window dimensions and support keyboard focus, with `RET` opening the original-size diagram in Emacs's image viewer.
+- Share preview navigation between native Emacs, Meow and Evil movement commands while preserving counts, selections and operators.
+- Stop mouse-wheel retries when an inline preview at the end of a buffer cannot scroll further.
 - Keep Org previews before following blank lines so typing beneath a diagram stays below it.
+- Suppress duplicate Org Babel result images while live previews are enabled, retaining result links and files and restoring Org's image display on disable.
 - Simplify Org block extraction and HTTP download handling.
 - Remove redundant highlighting checks and unused reference data; split test targets to avoid repeated CI suites.
 - Consolidate preview and development documentation.
