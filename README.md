@@ -1,6 +1,6 @@
 # pele.el
 
-Edit Mermaid and render SVG diagrams in Emacs with the original [Pele](https://github.com/obsidianmd/pele) engine maintained by kepano / Obsidian.
+Edit Mermaid and render SVG diagrams in Emacs with the original [Pele](https://github.com/obsidianmd/pele) engine maintained by [kepano](https://github.com/kepano) at [Obsidian](https://obsidian.md).
 
 ![Mermaid source highlighting and an inline flowchart preview in Emacs](docs/images/workflow.png)
 

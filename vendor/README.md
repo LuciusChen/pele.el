@@ -7,7 +7,7 @@ Runtime builds and execution do not fetch dependencies.
 | [Pele](https://github.com/obsidianmd/pele) | 1.13.0 | https://registry.npmjs.org/pele/-/pele-1.13.0.tgz | `00f879d86c5a6ece897ef70e18fd228a9952bba338a0cb1293b373900d7414bd` |
 | [QuickJS](https://github.com/bellard/quickjs) | 2026-06-04 | https://bellard.org/quickjs/quickjs-2026-06-04.tar.xz | `b376e839b322978313d929fd20663b11ba58b75df5a46c126dd19ea2fa70ad2a` |
 
-`pele/pele.global.js`, `pele/package.json` and `pele/LICENSE` are copied without modification from the npm archive. [Pele](https://github.com/obsidianmd/pele) is by kepano / Obsidian. Documentation and a playground are at [pele.run](https://pele.run).
+`pele/pele.global.js`, `pele/package.json` and `pele/LICENSE` are copied without modification from the npm archive. [Pele](https://github.com/obsidianmd/pele) is developed by [kepano](https://github.com/kepano) at [Obsidian](https://obsidian.md). Documentation and a playground are at [pele.run](https://pele.run).
 
 The Flexoki color values and 6px corner radius in `pele.el` are from the upstream website's `website/src/styles/pele-theme.scss` and `base.scss` at commit `3a2f075ee0c3d914f0fad3545fc0f193693975ac`, under the same MIT license retained in `pele/LICENSE`.
 
