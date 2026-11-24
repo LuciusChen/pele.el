@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Keep Org previews before following blank lines so typing beneath a diagram stays below it.
 - Simplify Org block extraction and HTTP download handling.
 - Remove redundant highlighting checks and unused reference data; split test targets to avoid repeated CI suites.
 - Consolidate preview and development documentation.

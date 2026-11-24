@@ -93,6 +93,27 @@
     (pele-markdown-mode 1)
     (should-not pele--inline-overlays)))
 
+(pele-markdown-test--deftest input-after-preview-stays-below-image
+  (dolist (tail '("" "\n\n" " \t" "\n \t\nNext paragraph\n"))
+    (erase-buffer)
+    (insert "```mermaid\ninfo\n```\n")
+    (let ((end (point)))
+      (insert tail)
+      (pele-markdown-mode 1) (pele-markdown-test--wait)
+      (let* ((overlay (car pele--inline-overlays))
+             (image (overlay-get overlay 'after-string)))
+        (should (= end (overlay-start overlay)))
+        (goto-char end) (newline 2)
+        (should (= end (overlay-start overlay)))
+        (pele--inline-refresh) (pele-markdown-test--wait)
+        (should (eq overlay (car pele--inline-overlays)))
+        (should (= end (overlay-start overlay)))
+        (should (equal image (overlay-get overlay 'after-string)))
+        (insert "Text below the diagram")
+        (pele--inline-refresh) (pele-markdown-test--wait)
+        (should (= end (overlay-start overlay)))))
+    (pele-markdown-mode -1)))
+
 (pele-markdown-test--deftest retains-last-image-and-recovers-after-edit
   (insert "```mermaid\nflowchart LR\nA-->B\n```\n")
   (pele-markdown-mode 1) (pele-markdown-test--wait)

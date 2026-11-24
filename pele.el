@@ -597,7 +597,13 @@ Each block is a plist with :begin, :end and :source."
     (lambda (element)
       (when (pele--language-p (org-element-property :language element))
         (list :begin (org-element-property :begin element)
-              :end (org-element-property :end element)
+              :end (save-excursion
+                     ;; Org's :end includes following blank lines. Keep the
+                     ;; preview at the closing line so input stays below it.
+                     (goto-char (org-element-property :end element))
+                     (skip-chars-backward " \t\r\n")
+                     (forward-line 1)
+                     (point))
               :source (org-element-property :value element))))))
 
 ;;;###autoload

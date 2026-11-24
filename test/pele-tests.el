@@ -360,6 +360,30 @@
           (should-not (buffer-modified-p)))
       (pele-org-mode -1))))
 
+(ert-deftest pele-org-input-after-preview-stays-below-image ()
+  (dolist (tail '("" "\n\n" " \t" "\n \t\nNext paragraph\n"))
+    (with-temp-buffer
+      (org-mode)
+      (insert "#+begin_src mermaid\ninfo\n#+end_src\n")
+      (let ((end (point)))
+        (insert tail)
+        (unwind-protect
+            (progn
+              (pele-org-mode 1) (pele-test--wait)
+              (let* ((overlay (car pele--inline-overlays))
+                     (image (overlay-get overlay 'after-string)))
+                (should (= end (overlay-start overlay)))
+                (goto-char end) (newline 2)
+                (should (= end (overlay-start overlay)))
+                (pele--inline-refresh) (pele-test--wait)
+                (should (eq overlay (car pele--inline-overlays)))
+                (should (= end (overlay-start overlay)))
+                (should (equal image (overlay-get overlay 'after-string)))
+                (insert "Text below the diagram")
+                (pele--inline-refresh) (pele-test--wait)
+                (should (= end (overlay-start overlay)))))
+          (pele-org-mode -1))))))
+
 (ert-deftest pele-org-retains-last-image-on-incomplete-input ()
   (with-temp-buffer
     (org-mode)
