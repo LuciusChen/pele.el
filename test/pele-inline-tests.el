@@ -156,6 +156,17 @@
               (should (overlay-get (car images) 'display))
               (should (overlay-get (cadr images) 'display))
               (should-not (overlay-get (caddr images) 'display))
+              ;; Renaming a block changes which named result belongs to it.
+              (goto-char (point-min))
+              (search-forward "#+name: diagram")
+              (replace-match "#+name: renamed")
+              (pele--inline-refresh)
+              (should (overlay-get (caddr images) 'display))
+              (goto-char (point-min))
+              (search-forward "#+name: renamed")
+              (replace-match "#+name: diagram")
+              (pele--inline-refresh)
+              (should-not (overlay-get (caddr images) 'display))
               ;; A result ceases to belong to Pele if the source language changes.
               (goto-char (point-min))
               (search-forward "mermaid")
@@ -193,7 +204,8 @@
               (search-forward "info")
               (replace-match "flowchart LR\nA --> B")
               (pele--inline-refresh)
-              (should (> pele-inline-test--renders renders)))
+              (should (> pele-inline-test--renders renders))
+              (should-not (overlay-get (car (pele-inline-test--org-images)) 'display)))
             (with-temp-buffer
               (insert-file-contents file)
               (should (equal saved-svg (buffer-string))))
@@ -301,6 +313,35 @@
             (should (< (cdr (image-size (overlay-get overlay 'pele-image) t)) (cdr initial)))
             (should (= 1 pele-inline-test--renders)))
         (set-frame-height nil height)))))
+
+(ert-deftest pele-inline-refresh-reuses-display-until-source-or-settings-change ()
+  (pele-inline-test--buffer #'org-mode "\n"
+    (goto-char (point-max))
+    (insert "\n#+begin_src mermaid\ninfo\n#+end_src\n")
+    (pele--inline-refresh)
+    (let* ((first (car pele--inline-overlays))
+           (second (cadr pele--inline-overlays))
+           (image (overlay-get first 'pele-image))
+           (text (overlay-get first 'after-string)))
+      (dotimes (_ 5) (pele--inline-refresh))
+      (should (= 2 pele-inline-test--renders))
+      (should (eq image (overlay-get first 'pele-image)))
+      (should (eq text (overlay-get first 'after-string)))
+      ;; Global render settings still invalidate every affected preview.
+      (let ((pele-font-size (+ pele-font-size 2)))
+        (pele--inline-refresh)
+        (should (= 4 pele-inline-test--renders))
+        (should-not (eq text (overlay-get first 'after-string)))
+        ;; Editing one source leaves the other block's image and display intact.
+        (setq image (overlay-get second 'pele-image)
+              text (overlay-get second 'after-string))
+        (goto-char (point-min))
+        (search-forward "info")
+        (replace-match "flowchart LR\nA --> B")
+        (pele--inline-refresh)
+        (should (= 5 pele-inline-test--renders))
+        (should (eq image (overlay-get second 'pele-image)))
+        (should (eq text (overlay-get second 'after-string)))))))
 
 (ert-deftest pele-inline-layout-notification-keeps-image-focus ()
   (pele-inline-test--buffer #'org-mode "\n"

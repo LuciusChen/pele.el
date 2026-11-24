@@ -40,6 +40,7 @@
 (declare-function evil-emacs-state "evil-states" (&optional arg))
 (defvar image-auto-resize)
 (defvar mwheel-scroll-up-function)
+(defvar org-babel-results-keyword)
 
 (defgroup pele nil "Mermaid SVG previews with Pele." :group 'multimedia)
 
@@ -542,6 +543,10 @@ Default to the available window size.  Preserve aspect ratio; never enlarge."
 (defvar-local pele--inline-focus-exit nil)
 (defvar-local pele--inline-wheel nil)
 (defvar pele--inline-moving nil)
+(defvar-local pele--org-results nil
+  "Babel result regions, keyed by the text modification tick and keyword.
+Positions remain valid while buffer text is unchanged; image overlays may
+be recreated independently by Org's preview commands.")
 
 (defconst pele--inline-motions
   '((next-line 1) (previous-line -1)
@@ -560,26 +565,33 @@ Default to the available window size.  Preserve aspect ratio; never enlarge."
     (define-key map [mouse-1] #'pele-inline-open)
     map))
 
-(defun pele--inline-display (overlay)
-  "Display OVERLAY's cached result at the current window size."
+(defun pele--inline-display (overlay &optional width height)
+  "Display OVERLAY's cached result, fitting WIDTH and HEIGHT.
+Default to the available window size.  Reuse the display until its image
+or virtual cursor changes."
   (when-let* ((result (overlay-get overlay 'pele-result)))
-    (let ((size (cons (pele--window-width) (pele--window-height))))
-      (unless (equal size (overlay-get overlay 'pele-size))
-        (overlay-put overlay 'pele-image (pele--image result (car size) (cdr size)))
-        (overlay-put overlay 'pele-size size)))
+    (let ((width (or width (pele--window-width)))
+          (height (or height (pele--window-height)))
+          (size (overlay-get overlay 'pele-size)))
+      (unless (and (equal width (car size)) (equal height (cdr size)))
+        (overlay-put overlay 'pele-image (pele--image result width height))
+        (overlay-put overlay 'pele-size (cons width height))))
     (let* ((focused (eq overlay pele--inline-focus))
            (image (overlay-get overlay 'pele-image))
-           (text (concat "\n" (propertize " " 'display image 'cursor focused
-                                        'keymap pele--inline-image-map 'pele-overlay overlay)
-                         "\n"
-                         (propertize " " 'display '(space :width 0) 'cursor
-                                     (and (not focused)
-                                          (or (eq overlay pele--inline-below)
-                                              (eq (char-before (overlay-start overlay)) ?\n)))))))
-      ;; A virtual cursor below the image keeps normal insertion below it.
-      ;; Focus moves it onto the image without adding any buffer characters.
-      (overlay-put overlay 'after-string
-                   (propertize text 'line-prefix "" 'wrap-prefix "")))))
+           (below (and (not focused)
+                       (or (eq overlay pele--inline-below)
+                           (eq (char-before (overlay-start overlay)) ?\n))))
+           (state (overlay-get overlay 'pele-display-state)))
+      (unless (and (eq image (nth 0 state)) (eq focused (nth 1 state))
+                   (eq below (nth 2 state)))
+        (let ((text (concat "\n" (propertize " " 'display image 'cursor focused
+                                            'keymap pele--inline-image-map 'pele-overlay overlay)
+                            "\n" (propertize " " 'display '(space :width 0) 'cursor below))))
+          ;; A virtual cursor below the image keeps normal insertion below it.
+          ;; Focus moves it onto the image without adding any buffer characters.
+          (overlay-put overlay 'after-string
+                       (propertize text 'line-prefix "" 'wrap-prefix ""))
+          (overlay-put overlay 'pele-display-state (list image focused below)))))))
 
 (defun pele--inline-unfocus ()
   "Leave the focused preview and remove its temporary keymap."
@@ -737,9 +749,9 @@ motion, and leave counts, selections, operators and programmatic calls alone."
   (when-let* ((marker (overlay-get overlay 'pele-begin))) (set-marker marker nil))
   (delete-overlay overlay))
 
-(defun pele--inline-update (overlay source options)
-  "Update OVERLAY for SOURCE and render OPTIONS."
-  (let ((key (concat source "\0" (pele--options-json options)))
+(defun pele--inline-update (overlay source options options-key)
+  "Update OVERLAY for SOURCE and OPTIONS, encoded once as OPTIONS-KEY."
+  (let ((key (cons source options-key))
         (buffer (current-buffer)))
     (unless (equal key (overlay-get overlay 'pele-key))
       (when-let* ((id (overlay-get overlay 'pele-request))) (pele-cancel id))
@@ -774,9 +786,12 @@ motion, and leave counts, selections, operators and programmatic calls alone."
     (save-excursion
       (save-restriction
         (widen)
-        (let ((blocks (funcall pele--inline-blocks-function))
-              (old pele--inline-overlays)
-              (width (pele--window-width)))
+        (let* ((blocks (funcall pele--inline-blocks-function))
+               (old pele--inline-overlays)
+               (width (pele--window-width))
+               (height (pele--window-height))
+               (options (list :max-width width))
+               (options-key (and blocks (pele--options-json options))))
           (setq pele--inline-overlays nil)
           (unwind-protect
               (dolist (block blocks)
@@ -795,8 +810,8 @@ motion, and leave counts, selections, operators and programmatic calls alone."
                     (overlay-put overlay 'pele-begin (copy-marker begin)))
                   (move-overlay overlay end end)
                   (pele--inline-update overlay (plist-get block :source)
-                                       (list :max-width width))
-                  (pele--inline-display overlay)))
+                                       options options-key)
+                  (pele--inline-display overlay width height)))
             (mapc #'pele--inline-delete old)
             (setq pele--inline-overlays (nreverse pele--inline-overlays))))))))
 
@@ -816,7 +831,8 @@ motion, and leave counts, selections, operators and programmatic calls alone."
   "Remove the current buffer's previews, hooks and pending work."
   (pele--inline-unfocus)
   (when (eq pele--inline-blocks-function #'pele--org-blocks)
-    (pele--org-display-results nil))
+    (pele--org-display-results nil (pele--org-images))
+    (setq pele--org-results nil))
   (remove-hook 'post-command-hook #'pele--inline-after-command t)
   (when pele--inline-wheel
     (when (eq mwheel-scroll-up-function #'pele--inline-scroll-up)
@@ -847,11 +863,18 @@ Each block is a plist with :begin, :end and :source."
   (add-hook 'change-major-mode-hook #'pele--inline-disable nil t)
   (pele--inline-refresh))
 
-(defun pele--org-display-results (regions)
-  "Suppress Org result images in REGIONS, restoring any outside them.
+(defun pele--org-images ()
+  "Return Org image overlays, including images suppressed by Pele."
+  (seq-filter (lambda (overlay)
+                (or (overlay-get overlay 'org-image-overlay)
+                    (overlay-get overlay 'pele-org-image)))
+              (let ((lists (overlay-lists))) (append (car lists) (cdr lists)))))
+
+(defun pele--org-display-results (regions images)
+  "Suppress IMAGES in result REGIONS, restoring any outside them.
 Keep Org's overlays so its image toggles and refreshes retain ownership.
 Only their display properties change; links, files and undo stay intact."
-  (dolist (overlay (let ((lists (overlay-lists))) (append (car lists) (cdr lists))))
+  (dolist (overlay images)
     (let ((saved (overlay-get overlay 'pele-org-image)))
       (if (and (overlay-get overlay 'org-image-overlay)
                (seq-some (lambda (region)
@@ -874,17 +897,21 @@ Only their display properties change; links, files and undo stay intact."
   "Collect Mermaid Org blocks and suppress their duplicate result images."
   (require 'org-element)
   (require 'ob-core)
-  (let (regions)
+  (let* ((images (pele--org-images))
+         (key (cons (buffer-chars-modified-tick) org-babel-results-keyword))
+         (collect-results (and images (not (equal key (car pele--org-results)))))
+         (regions (unless collect-results (cdr pele--org-results))))
     (prog1
         (org-element-map (org-element-parse-buffer) 'src-block
           (lambda (element)
             (when (pele--language-p (org-element-property :language element))
-              (save-excursion
-                (goto-char (org-element-property :begin element))
-                (when-let* ((result (org-babel-where-is-src-block-result)))
-                  (goto-char result)
-                  (forward-line 1)
-                  (push (cons (point) (org-babel-result-end)) regions)))
+              (when collect-results
+                (save-excursion
+                  (goto-char (org-element-property :begin element))
+                  (when-let* ((result (org-babel-where-is-src-block-result)))
+                    (goto-char result)
+                    (forward-line 1)
+                    (push (cons (point) (org-babel-result-end)) regions))))
               (list :begin (org-element-property :begin element)
                     :end (save-excursion
                            ;; Org's :end includes following blank lines. Keep the
@@ -894,7 +921,8 @@ Only their display properties change; links, files and undo stay intact."
                            (forward-line 1)
                            (point))
                     :source (org-element-property :value element)))))
-      (pele--org-display-results regions))))
+      (when collect-results (setq pele--org-results (cons key regions)))
+      (pele--org-display-results regions images))))
 
 (defun pele--org-after-images (&optional buffer &rest _)
   "Deduplicate Org images after an image refresh, possibly in BUFFER."

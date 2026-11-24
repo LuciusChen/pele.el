@@ -7,6 +7,7 @@
 - Stop mouse-wheel retries when an inline preview at the end of a buffer cannot scroll further.
 - Keep Org previews before following blank lines so typing beneath a diagram stays below it.
 - Suppress duplicate Org Babel result images while live previews are enabled, retaining result links and files and restoring Org's image display on disable.
+- Reduce inline refresh allocations by sharing render settings and window dimensions, reusing unchanged displays and retaining Org result positions until the text changes.
 - Simplify Org block extraction and HTTP download handling.
 - Remove redundant highlighting checks and unused reference data; split test targets to avoid repeated CI suites.
 - Consolidate preview and development documentation.
