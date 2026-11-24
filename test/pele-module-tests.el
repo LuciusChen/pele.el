@@ -190,8 +190,7 @@
                        (with-current-buffer buffer
                          (set-buffer-multibyte nil)
                          (insert "HTTP response\r\n\r\n")
-                         (setq-local url-http-response-status status
-                                     url-http-end-of-headers (copy-marker (1- (point))))
+                         (setq-local url-http-response-status status)
                          (insert bytes))
                        buffer))))
           (if (= status 404)

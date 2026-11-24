@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Simplify Org block extraction and HTTP download handling.
+- Remove redundant highlighting checks and unused reference data; split test targets to avoid repeated CI suites.
+- Consolidate preview and development documentation.
+
 ## 0.0.1 — 2026-11-24
 
 First public release.

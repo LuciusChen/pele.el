@@ -26,7 +26,7 @@ jobs:
       - name: Install Emacs
         run: brew install emacs
       - name: Build, test and package
-        run: make -j2 check package
+        run: make -j2 test-lisp package
       - name: Verify the relocated module
         run: |
           mkdir "$RUNNER_TEMP/pele-bundle"

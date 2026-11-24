@@ -387,20 +387,15 @@ Interactive previews use the asynchronous API instead."
   "Return non-nil when source LANGUAGE is handled by Pele."
   (member (downcase (or language "")) '("mermaid" "pele")))
 
-(defun pele--org-block ()
-  "Return the Mermaid Org source block at point, or nil."
-  (when (derived-mode-p 'org-mode)
-    (require 'org-element)
-    (let ((element (org-element-lineage (org-element-context) '(src-block) t)))
-      (when (and element
-                 (pele--language-p (org-element-property :language element)))
-        element))))
-
 (defun pele--source-at-point ()
   "Return the active region, current Mermaid code block, or buffer contents."
   (cond ((use-region-p) (buffer-substring-no-properties (region-beginning) (region-end)))
-        ((pele--org-block) (org-element-property :value (pele--org-block)))
-        ((derived-mode-p 'org-mode) (user-error "Point is not in a Mermaid source block"))
+        ((derived-mode-p 'org-mode)
+         (require 'org-element)
+         (let ((block (org-element-lineage (org-element-context) '(src-block) t)))
+           (unless (and block (pele--language-p (org-element-property :language block)))
+             (user-error "Point is not in a Mermaid source block"))
+           (org-element-property :value block)))
         ((derived-mode-p 'markdown-mode 'markdown-ts-mode)
          (or (pele-markdown--source-at-point)
              (user-error "Point is not in a Mermaid code block")))

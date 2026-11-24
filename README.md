@@ -66,6 +66,8 @@ If Emacs or its header is elsewhere, use `make EMACS=/path/to/emacs EMACS_INCLUD
 
 ## Usage
 
+Org and Markdown live previews appear below each Mermaid block without modifying the file. Edits refresh after `pele-preview-delay` (0.2 idle seconds by default). Incomplete input keeps the last successful image; the preview's help text reports the error. Disabling the preview mode removes its images and cancels pending work.
+
 ### Source files and regions
 
 Open a `.mmd` or `.mermaid` file to enter `pele-mode`. Use `C-c C-p` to preview or `C-c C-e` to export SVG. In other buffers, select a region of Mermaid source and run `M-x pele-preview` or `M-x pele-export`. With no region, these commands use the Org or Markdown code block at point, or the whole diagram buffer.
@@ -83,7 +85,7 @@ flowchart LR
 #+end_src
 ```
 
-Previews are overlays and do not modify the file. Edits refresh after 0.2 idle seconds by default. Incomplete input keeps the last successful image; the preview's help text reports the error. Try [examples/gallery.org](examples/gallery.org) and [examples/editor.org](examples/editor.org).
+Try [examples/gallery.org](examples/gallery.org) and [examples/editor.org](examples/editor.org).
 
 Both block languages use `pele-mode` for native source highlighting and `C-c '` editing, unless you have explicitly chosen another source mode. Keep `org-src-fontify-natively` enabled.
 
@@ -115,23 +117,17 @@ Enable `pele-markdown-mode` in a Markdown buffer, or add hooks:
 (add-hook 'markdown-ts-mode-hook #'pele-markdown-mode)
 ```
 
-Mermaid fenced code blocks show live SVG previews below the closing fence. This works with `markdown-mode`, `gfm-mode` and `markdown-ts-mode`. Both backtick and tilde fences are supported, with `mermaid` or `pele` as the language. The Markdown major mode continues to handle editing and fenced-code highlighting.
+This works with `markdown-mode`, `gfm-mode` and `markdown-ts-mode`. Both backtick and tilde fences are supported, with `mermaid` or `pele` as the language. The Markdown major mode continues to handle editing and fenced-code highlighting.
 
-Edits refresh after `pele-preview-delay`, retaining the last successful diagram while the source is incomplete. Disabling the mode, deleting a block, changing major modes or killing the buffer cancels its pending work and removes previews. The Markdown file is unchanged. With point inside a Mermaid fence, `pele-preview` and `pele-export` also work without enabling live previews. Try [examples/gallery.md](examples/gallery.md).
+With point inside a Mermaid fence, `pele-preview` and `pele-export` also work without enabling live previews. Try [examples/gallery.md](examples/gallery.md).
 
 ## Appearance and render options
 
-```elisp
-(setq pele-theme 'auto
-      pele-background 'transparent
-      pele-text-measurement 'native)
-```
-
 The default transparent canvas lets the Emacs buffer show through; boxes, circles and other nodes retain their fills. Set `pele-background` to `theme` for a solid canvas, for example when exporting onto a different background.
 
-`pele-theme` accepts `auto` (Emacs foreground/background plus Pele's palette), `pele` (the full official light/dark palette), `light`, `dark`, or an alist of CSS variables such as `(("--pele-bg" . "#202124") ("--pele-fg" . "#eeeeee"))`.
+`pele-theme` defaults to `auto` (Emacs foreground/background plus Pele's palette). It also accepts `pele` (the full official light/dark palette), `light`, `dark`, or an alist of CSS variables such as `(("--pele-bg" . "#202124") ("--pele-fg" . "#eeeeee"))`.
 
-Other user options include `pele-font-size`, `pele-font-family`, `pele-font-family-mono`, `pele-preview-delay`, `pele-render-timeout`, `pele-cache-size` and `pele-cache-byte-limit`. Font measurements use Core Text on macOS and Pango on Linux, including bold, italic and monospace labels. Browser and Emacs SVG display can still differ slightly.
+Other user options include `pele-font-size`, `pele-font-family`, `pele-font-family-mono`, `pele-preview-delay`, `pele-render-timeout`, `pele-cache-size` and `pele-cache-byte-limit`. `pele-text-measurement` defaults to `native`: Core Text on macOS and Pango when built in on Linux, including bold, italic and monospace labels. Browser and Emacs SVG display can still differ slightly.
 
 Diagram fonts are configured separately from the Emacs buffer font. Use a comma-separated family list for fallback fonts, for example on macOS:
 

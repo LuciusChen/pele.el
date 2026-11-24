@@ -4,9 +4,6 @@
 (require 'cl-lib)
 (require 'pele-mode)
 
-(defconst pele-mode-test--directory
-  (file-name-directory (or load-file-name buffer-file-name)))
-
 (defun pele-mode-test--face (text)
   (goto-char (point-min))
   (search-forward text)
@@ -53,30 +50,6 @@
     (font-lock-ensure)
     (should (eq (pele-mode-test--face "%%{init") 'pele-language-face))
     (should (eq (pele-mode-test--face "railroad-ebnf-beta") 'pele-keyword-face))))
-
-(ert-deftest pele-mode-fontifies-all-522-upstream-examples ()
-  (let ((files (directory-files (expand-file-name "corpus" pele-mode-test--directory)
-                                t "-docs\\.json\\'"))
-        (count 0))
-    (should (= 33 (length files)))
-    (dolist (file files)
-      (let ((sources (with-temp-buffer
-                       (insert-file-contents file)
-                       (json-parse-buffer :array-type 'list))))
-        (dolist (source sources)
-          (ert-info ((format "%s example %d" file count))
-            (with-temp-buffer
-              (insert source)
-              (pele-mode)
-              (font-lock-ensure)
-              (goto-char (point-min))
-              (let ((case-fold-search t) found)
-                ;; A YAML config key can have the same spelling as a header.
-                (while (and (not found) (re-search-forward pele-mode--header-regexp nil t))
-                  (setq found (eq (get-text-property (match-beginning 1) 'face) 'pele-keyword-face)))
-                (should found))))
-          (cl-incf count))))
-    (should (= 522 count))))
 
 (ert-deftest pele-mode-indents-nested-flowchart-blocks ()
   (should

@@ -22,4 +22,4 @@ jobs:
       - name: Validate width estimates
         run: |
           make clean
-          make -j2 check TEXT_BACKEND=estimate
+          make -j2 test-renderer TEXT_BACKEND=estimate

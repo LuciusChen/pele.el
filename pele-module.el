@@ -19,7 +19,6 @@
 (defvar pele--directory)
 (defvar pele--loaded-module-file nil)
 (defvar url-http-response-status)
-(defvar url-http-end-of-headers)
 (declare-function url-retrieve-synchronously "url" (url &optional silent inhibit-cookies timeout))
 
 (defcustom pele-module-directory (locate-user-emacs-file "pele/modules/")
@@ -121,7 +120,7 @@ source build.  Loading or byte-compiling the package never downloads."
     (unless (buffer-live-p buffer) (error "Could not download %s" url))
     (unwind-protect
         (with-current-buffer buffer
-          (unless (and (eql url-http-response-status 200) url-http-end-of-headers)
+          (unless (eql url-http-response-status 200)
             (error "Pele download failed (HTTP %s): %s" url-http-response-status url))
           (when (> (buffer-size) (* 64 1024 1024)) (error "Pele download exceeds 64 MiB"))
           ;; url-http's header marker can precede the final newline.  Find

@@ -52,7 +52,7 @@ else
 SHARED_FLAGS := -shared
 endif
 
-.PHONY: all test test-corpus check compile clean package
+.PHONY: all test test-lisp test-renderer test-corpus check compile clean package
 all: $(MODULE)
 
 build:
@@ -74,9 +74,13 @@ compile:
 	$(EMACS) -Q --batch --eval '(dolist (file (directory-files "test" t "\\.el$$")) (with-temp-buffer (insert-file-contents file) (emacs-lisp-mode) (check-parens)))'
 	$(EMACS) -Q --batch -L . --eval '(setq byte-compile-error-on-warn t)' -f batch-byte-compile pele-font-lock.el pele-mode.el pele-module.el pele.el pele-markdown.el ob-pele.el
 
-test: all compile
+test-lisp: compile
 	$(EMACS) -Q --batch -L . -L test -l pele-mode-tests -l pele-highlighting-tests -l pele-module-tests -f ert-run-tests-batch-and-exit
+
+test-renderer: all compile
 	$(EMACS) -Q --batch --module-assertions -L . -L test $(if $(MARKDOWN_MODE_DIR),-L "$(MARKDOWN_MODE_DIR)") -l pele-tests -l pele-markdown-tests -f ert-run-tests-batch-and-exit
+
+test: test-lisp test-renderer
 
 test-corpus: all compile
 	$(EMACS) -Q --batch --module-assertions -L . -L test -l pele-corpus-tests -f ert-run-tests-batch-and-exit

@@ -40,9 +40,6 @@
     "railroad-peg-beta" "treeView-beta" "venn-beta" "cynefin-beta"
     "wardley-beta" "swimlane-beta" "ishikawa" "ishikawa-beta" "eventmodeling"))
 
-(defconst pele-mode--header-regexp
-  (concat "^[ \t]*\\(" (regexp-opt pele-mode--headers) "\\)\\_>"))
-
 (defvar pele-mode-syntax-table
   (let ((table (make-syntax-table)))
     ;; Two percent signs start a line comment; a single percent does not.

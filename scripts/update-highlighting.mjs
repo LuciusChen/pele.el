@@ -55,7 +55,7 @@ function reference(source) {
     states.push(stateBits(state));
     if (index + 1 < lines.length) emit(1, 0);
   }
-  return { runs, state: stateBits(state), states };
+  return { runs, states };
 }
 
 const examples = [
@@ -100,7 +100,7 @@ let count = 0;
 for (const file of fs.readdirSync('test/corpus').filter(name => name.endsWith('-docs.json')).sort()) {
   corpus[file] = JSON.parse(fs.readFileSync(`test/corpus/${file}`, 'utf8')).map(source => {
     count++;
-    return reference(source);
+    return { runs: reference(source).runs };
   });
 }
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
@@ -109,6 +109,6 @@ fs.writeFileSync('test/corpus/highlighting.json', JSON.stringify({
   sha256: { 'highlight.ts': hash(original), 'playground-limits.ts': hash(limits) },
   maxLineLength: limit, classes, corpus,
   fixtures: examples.map(([name, source]) => ({ name, source, ...reference(source) })),
-  edits: edits.map(([name, sources]) => ({ name, steps: sources.map(source => ({ source, ...reference(source) })) })),
+  edits: edits.map(([name, sources]) => ({ name, steps: sources.map(source => ({ source, runs: reference(source).runs })) })),
 }, null, 2) + '\n');
 console.log(`${count} upstream examples, ${examples.length} focused cases, ${edits.length} edit sequences`);

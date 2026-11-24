@@ -4,7 +4,7 @@ Run the commands below from the repository root. For installation and everyday u
 
 ## Architecture and limits
 
-Source editing is independent of the native renderer. Highlighting follows the website's token order, multiline strings and YAML frontmatter. Lines over its 2,000 UTF-16 code-unit limit are left uncolored. Indentation covers explicit blocks and branches while preserving hierarchy-based indentation in diagrams such as mindmaps. The syntax faces use Flexoki light and dark colors without setting a background fill.
+Source editing is independent of the native renderer. The highlighter leaves lines over the website's 2,000 UTF-16 code-unit limit uncolored. Indentation covers explicit blocks and branches while preserving hierarchy-based indentation in diagrams such as mindmaps.
 
 ```text
 pele-mode.el + pele-font-lock.el       source editing and highlighting
@@ -23,31 +23,29 @@ Only the Emacs thread calls the Emacs module API. A completion pipe wakes Emacs;
 
 Org and Markdown share one inline preview lifecycle: block collectors return `:begin`, `:end` and `:source` plists; the common layer owns overlays, idle refreshes and cancellation. The legacy Markdown collector scans fence boundaries and uses `markdown-mode` syntax properties to exclude comments and indented code; this also handles long backtick fences that older versions do not recognize. The Tree-sitter collector uses the existing `markdown-ts-mode` Markdown tree. Neither creates a Mermaid parser or adds a Tree-sitter requirement to other modes.
 
-The JavaScript runtime has a 128 MiB memory limit. The bridge caps source at 50,000 characters, edges at 5,000 and upstream SVG at 4,000,000 characters. It resolves scoped CSS variables and corner radii for Emacs SVG display while preserving Pele's paths, labels and dimensions. Node fills and label backings remain intact. Diagram images and clickable links are disabled; external icon libraries and mathematical typesetters are not bundled, so Pele's text fallback applies.
+The JavaScript runtime has a 128 MiB memory limit. The bridge caps source at 50,000 characters, edges at 5,000 and upstream SVG at 4,000,000 characters. It resolves scoped CSS variables and corner radii for Emacs SVG display while preserving Pele's paths, labels and dimensions.
 
 ## Verification
 
 ```sh
 make check          # compile with warnings as errors; editor, integration and corpus tests
 make test           # editor and renderer integration tests
+make test-lisp      # editor, website highlighting and installer; no native build
+make test-renderer  # renderer, Org/Babel and Markdown integration tests
 make test-corpus    # all 522 documentation examples across 33 diagram types
 
 # Verify the optional build using width estimates only:
 make clean
-make -j4 check TEXT_BACKEND=estimate
+make -j4 test-renderer TEXT_BACKEND=estimate
 ```
 
-Run `make clean` before changing font backends, then rebuild normally to restore native font measurements. `TEXT_BACKEND=auto` selects Core Text on macOS, Pango on Linux when available, and otherwise estimates. Explicit `coretext`, `pango` and `estimate` values are also supported. Linux CI checks native and estimated builds. Rendering tests use Emacs module assertions and cover cancellation, deadlines, queueing, recovery, cache behavior, preview cleanup, themes and Babel. The corpus checks the generated SVG as XML and compares type, dimensions, paths and text to the original engine using identical width estimates. It also exercises all examples with the default font backend.
+Run `make clean` before changing font backends, then rebuild normally to restore native font measurements. `TEXT_BACKEND=auto` selects Core Text on macOS, Pango on Linux when available, and otherwise estimates. Explicit `coretext`, `pango` and `estimate` values are also supported. Linux CI runs `make check` with native font measurements, then the integration suite with an estimate-only build. Rendering tests use Emacs module assertions and cover cancellation, deadlines, queueing, recovery, cache behavior, preview cleanup, themes and Babel. Each corpus case compares type, dimensions, paths and text to the original engine using identical width estimates, then checks SVG XML with the default font backend. This covers both measurement paths without repeating the whole corpus for the estimate-only build.
 
 Markdown tests exercise both real major modes when available, including nested literal fences, edits, indentation, unclosed fences and lifecycle cleanup. Tests for an unavailable host mode or Markdown grammar are skipped. Debian/Ubuntu's `elpa-markdown-mode` is discovered automatically for tests. For a local checkout, pass `make check MARKDOWN_MODE_DIR=/path/to/markdown-mode`; `markdown-ts-mode` tests use the Markdown grammars already installed for that mode.
 
-The pure Elisp editor and installer suites can run independently of the native build:
-
-```sh
-emacs -Q --batch -L . -L test -l pele-mode-tests -l pele-highlighting-tests -l pele-module-tests -f ert-run-tests-batch-and-exit
-```
-
 Highlighting tests compare actual Emacs face ranges and edit sequences to reference output from the unmodified website highlighter, and verify its source hashes. To update references, use `node scripts/update-highlighting.mjs` (Node must provide `node:module.stripTypeScriptTypes`) and `node scripts/update-corpus.mjs` for rendering references. Node is only a development tool for regenerating these files.
+
+For an optional GUI rasterization check, run `emacs -Q -L . -l test/pele-gui-test.el`. It opens the Org gallery in a separate Emacs and writes actual image dimensions and errors to `test/output/gui-results.json`.
 
 Keep the vendored engines unmodified and pinned. Update the website source, Elisp port and highlighting reference together. Keep editing independent of rendering, and use the existing API and worker for integrations. Add regression tests for observable failures; avoid a second Mermaid parser or new abstractions without a concrete need.
 
@@ -57,9 +55,9 @@ For local timing, run `emacs -Q --batch -L . -l scripts/benchmark.el`. Results g
 
 The `Native packages` workflow builds and verifies macOS and Linux bundles for Apple Silicon/ARM64 and x86-64. It uploads workflow artifacts for release preparation. Before tagging a release, wait for both `Tests` and `Native packages` to pass on the exact commit. Download that run's artifacts and publish all binary/source archives and checksum files under `v<pele-version>`. Keep all Elisp version headers and companion package requirements equal to `pele-version`.
 
-`pele-module.el` downloads only the release matching the installed Elisp, never `latest`. It verifies platform, module ABI, the archive checksum, and every manifest file before moving a staged bundle into a version/platform directory outside the package checkout. Failed installs preserve the old copy. Replacing a currently loaded library is refused. Source builds alongside `pele.el` take precedence. The default `ask` policy only prompts at explicit interactive Pele entry points; background hooks and batch calls do not prompt. `download` is an explicit opt-in for first-render installation. Package loading and byte compilation never access the network.
+`pele-module.el` verifies the archive checksum and every manifest file, along with the exact Elisp version, platform and module ABI. Installation moves a verified staging directory into the module cache; failure preserves the old copy. See the README for download policies and user commands.
 
-On macOS, `make package` produces a stripped, ad-hoc signed archive in `dist/`, together with a SHA-256 file. Release builds target macOS 12+ using `MACOSX_DEPLOYMENT_TARGET=12.0`; they link only to system Core Text, Core Foundation and libSystem. The packager rejects Homebrew library dependencies. A relocated copy is tested before upload.
+On macOS, `make package` produces a stripped, ad-hoc signed archive in `dist/`, together with a SHA-256 file. Release builds target macOS 12+ using `MACOSX_DEPLOYMENT_TARGET=12.0`; they link only to system Core Text, Core Foundation and libSystem. The packager rejects Homebrew library dependencies. The workflow runs Lisp tests before packaging and renderer/corpus tests against the extracted bundle, so each suite runs once.
 
 For Linux, run:
 
