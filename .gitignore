@@ -1,0 +1,10 @@
+/build/
+/pele-native.so
+/pele-native.dylib
+/*.elc
+/*.eln
+/test/output/
+# Emacs lock, autosave and backup files.
+.#*
+\#*\#
+*~

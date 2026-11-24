@@ -1,0 +1,106 @@
+#+title: Pele diagrams in Emacs
+#+startup: showall
+
+Enable =M-x pele-org-mode= to preview these diagrams below their source.
+Use =M-x pele-preview= inside a block for a separate preview.
+Source highlighting and =C-c '= editing use the included =pele-mode=.
+
+* Flowchart
+#+begin_src mermaid
+flowchart LR
+  A[开始] --> B{数据有效?}
+  B -->|是| C[保存]
+  B -->|否| D[修正]
+  D --> B
+#+end_src
+
+* Sequence
+#+begin_src mermaid
+sequenceDiagram
+  participant User
+  participant Emacs
+  participant Pele
+  User->>Emacs: Edit Mermaid
+  Emacs->>Pele: Render in background
+  Pele-->>Emacs: SVG
+  Emacs-->>User: Preview
+#+end_src
+
+* Class
+#+begin_src mermaid
+classDiagram
+  class Diagram {
+    +String source
+    +render() SVG
+  }
+  class Preview {
+    +refresh()
+  }
+  Diagram --> Preview
+#+end_src
+
+* Entity relationship
+#+begin_src mermaid
+erDiagram
+  DOCUMENT ||--o{ DIAGRAM : contains
+  DIAGRAM ||--o{ PREVIEW : generates
+  DOCUMENT {
+    string title
+    string path
+  }
+  DIAGRAM {
+    string source
+    string type
+  }
+#+end_src
+
+* Gantt
+#+begin_src mermaid
+gantt
+  title Package development
+  dateFormat YYYY-MM-DD
+  section Engine
+  Embed Pele :done, core, 2026-11-23, 1d
+  section Emacs
+  Org previews :active, preview, 2026-11-24, 1d
+  Validation :after preview, 1d
+#+end_src
+
+* Pie
+#+begin_src mermaid
+pie title Example allocation
+  "Engineering" : 50
+  "Tests" : 30
+  "Documentation" : 20
+#+end_src
+
+* Mindmap
+#+begin_src mermaid
+mindmap
+  root((Pele))
+    Original engine
+      Mermaid syntax
+      SVG
+    Emacs
+      Org previews
+      Babel
+      Export
+#+end_src
+
+* Sankey
+#+begin_src mermaid
+sankey-beta
+Source,Parsing,10
+Parsing,Layout,10
+Layout,SVG,8
+Layout,Errors,2
+#+end_src
+
+* Radar
+#+begin_src mermaid
+radar-beta
+  title Priorities
+  axis Compatibility, Speed, Portability, Integration
+  curve Package{9, 8, 7, 9}
+  max 10
+#+end_src

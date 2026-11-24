@@ -1,0 +1,21 @@
+name: Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y emacs-gtk build-essential python3 pkg-config libpango1.0-dev
+      - name: Build and validate
+        run: make -j2 check
+      - name: Validate without Pango
+        run: |
+          make clean
+          make -j2 check PANGO_LIBS= PANGO_CFLAGS=

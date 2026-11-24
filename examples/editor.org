@@ -1,0 +1,21 @@
+#+title: Mermaid source and Pele preview
+#+startup: showall
+
+* Flowchart
+#+begin_src mermaid
+%% Source highlighting uses pure Elisp; rendering uses Pele.
+flowchart LR
+  A["开始"] --> B{"校验通过?"}
+  B -->|是| C["保存"]
+  B -->|否| D["修正"]
+  D --> B
+#+end_src
+
+* Sequence
+#+begin_src mermaid
+sequenceDiagram
+  participant Editor
+  participant Pele
+  Editor->>Pele: Render Mermaid
+  Pele-->>Editor: Transparent SVG
+#+end_src

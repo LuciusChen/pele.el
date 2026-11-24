@@ -1,0 +1,418 @@
+/* SPDX-License-Identifier: MIT */
+#include <emacs-module.h>
+#include <quickjs.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+#ifdef PELE_USE_PANGO
+#include <pango/pangocairo.h>
+#endif
+#include "bundles.h"
+
+#define EXPORT __attribute__((visibility("default")))
+#define MEMORY_LIMIT (128u * 1024u * 1024u)
+#define INPUT_LIMIT (1024u * 1024u)
+#define OPTIONS_LIMIT (64u * 1024u)
+#define MAX_PENDING 32
+
+/* Emacs requires this marker; MIT is a GPL-compatible license. */
+EXPORT int plugin_is_GPL_compatible;
+
+typedef struct job {
+    intmax_t id;
+    char *source, *options;
+    size_t source_len, options_len;
+    int timeout;
+    atomic_bool cancelled;
+    struct result *output;
+    struct job *next;
+} job;
+
+typedef struct result {
+    intmax_t id;
+    char *json;
+    struct result *next;
+} result;
+
+static struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    pthread_t thread;
+    bool running;
+    atomic_bool stopping;
+    job *head, *tail, *active;
+    result *done_head, *done_tail;
+    int pending;
+    double deadline;
+    bool timed_out;
+    int notify_fd;
+} engine = {
+    .mutex = PTHREAD_MUTEX_INITIALIZER,
+    .condition = PTHREAD_COND_INITIALIZER,
+    .notify_fd = -1
+};
+
+static double milliseconds(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return now.tv_sec * 1000.0 + now.tv_nsec / 1000000.0;
+}
+
+static char *failure(const char *code, const char *message) {
+    size_t size = strlen(message) * 6 + strlen(code) + 80;
+    char *json = malloc(size);
+    if (!json) return NULL;
+    size_t at = (size_t)snprintf(json, size, "{\"ok\":false,\"error\":{\"code\":\"%s\",\"message\":\"", code);
+    for (const unsigned char *p = (const unsigned char *)message; *p; p++) {
+        if (*p == '"' || *p == '\\') { json[at++] = '\\'; json[at++] = (char)*p; }
+        else if (*p < 32) at += (size_t)snprintf(json + at, size - at, "\\u%04x", *p);
+        else json[at++] = (char)*p;
+    }
+    memcpy(json + at, "\"}}", 4);
+    return json;
+}
+
+static char *exception_message(JSContext *context) {
+    JSValue exception = JS_GetException(context);
+    const char *text = JS_ToCString(context, exception);
+    char *copy = strdup(text ? text : "JavaScript engine failed");
+    if (text) JS_FreeCString(context, text);
+    JS_FreeValue(context, exception);
+    return copy;
+}
+
+static int interrupted(JSRuntime *runtime, void *opaque) {
+    (void)runtime;
+    (void)opaque;
+    if (atomic_load(&engine.stopping)) return 1;
+    if (engine.active && atomic_load(&engine.active->cancelled)) return 1;
+    if (milliseconds() >= engine.deadline) { engine.timed_out = true; return 1; }
+    return 0;
+}
+
+#ifdef PELE_USE_PANGO
+typedef struct {
+    PangoFontMap *fonts;
+    PangoContext *context;
+    PangoLayout *layout;
+} text_engine;
+
+static JSValue measure_text(JSContext *context, JSValueConst this_value,
+                            int argc, JSValueConst *args) {
+    (void)this_value;
+    if (argc != 4) return JS_ThrowTypeError(context, "Expected text, size, style and font family");
+    text_engine *text = JS_GetContextOpaque(context);
+    double size;
+    int32_t style;
+    if (JS_ToFloat64(context, &size, args[1]) || JS_ToInt32(context, &style, args[2])) return JS_EXCEPTION;
+    if (!(size > 0 && size <= 4000)) return JS_ThrowRangeError(context, "Invalid text size");
+    size_t length;
+    const char *label = JS_ToCStringLen(context, &length, args[0]);
+    if (!label) return JS_EXCEPTION;
+    const char *family = JS_ToCString(context, args[3]);
+    if (!family) { JS_FreeCString(context, label); return JS_EXCEPTION; }
+    PangoFontDescription *font = pango_font_description_new();
+    pango_font_description_set_family(font, family);
+    pango_font_description_set_absolute_size(font, size * PANGO_SCALE);
+    pango_font_description_set_weight(font, style & 1 ? PANGO_WEIGHT_BOLD : PANGO_WEIGHT_NORMAL);
+    pango_font_description_set_style(font, style & 2 ? PANGO_STYLE_ITALIC : PANGO_STYLE_NORMAL);
+    pango_layout_set_font_description(text->layout, font);
+    pango_layout_set_text(text->layout, label, (int)length);
+    PangoRectangle logical;
+    pango_layout_get_extents(text->layout, NULL, &logical);
+    pango_font_description_free(font);
+    JS_FreeCString(context, family);
+    JS_FreeCString(context, label);
+    return JS_NewFloat64(context, (double)logical.width / PANGO_SCALE);
+}
+#endif
+
+static void free_job(job *item) {
+    free(item->source);
+    free(item->options);
+    free(item->output);
+    free(item);
+}
+
+static void complete(job *item, char *json) {
+    result *output = item->output;
+    item->output = NULL;
+    output->id = item->id;
+    output->json = json ? json : failure("memory", "Not enough memory for the render result");
+    output->next = NULL;
+    pthread_mutex_lock(&engine.mutex);
+    engine.active = NULL;
+    if (engine.done_tail) engine.done_tail->next = output;
+    else engine.done_head = output;
+    engine.done_tail = output;
+    if (engine.notify_fd >= 0) {
+        // One pending byte is enough to wake Emacs; a full pipe already has one.
+        ssize_t written = write(engine.notify_fd, ".", 1);
+        (void)written;
+    }
+    pthread_mutex_unlock(&engine.mutex);
+    free_job(item);
+}
+
+static void *worker(void *unused) {
+    (void)unused;
+    sigset_t signals;
+    sigemptyset(&signals);
+    sigaddset(&signals, SIGPIPE);
+    pthread_sigmask(SIG_BLOCK, &signals, NULL);
+    JSRuntime *runtime = JS_NewRuntime();
+    JSContext *context = NULL;
+#ifdef PELE_USE_PANGO
+    text_engine text = {0};
+#endif
+    JSValue render = JS_UNDEFINED;
+    char *initialization_error = NULL;
+    engine.deadline = milliseconds() + 10000;
+    if (runtime) {
+        JS_SetMemoryLimit(runtime, MEMORY_LIMIT);
+        JS_SetMaxStackSize(runtime, 2u * 1024u * 1024u);
+        JS_SetInterruptHandler(runtime, interrupted, NULL);
+        context = JS_NewContext(runtime);
+    }
+    if (!context) initialization_error = strdup("Could not create the JavaScript runtime");
+    else {
+#ifdef PELE_USE_PANGO
+        text.fonts = pango_cairo_font_map_new();
+        text.context = pango_font_map_create_context(text.fonts);
+        pango_cairo_context_set_resolution(text.context, 96.0);
+        cairo_font_options_t *font_options = cairo_font_options_create();
+        cairo_font_options_set_hint_metrics(font_options, CAIRO_HINT_METRICS_OFF);
+        pango_cairo_context_set_font_options(text.context, font_options);
+        cairo_font_options_destroy(font_options);
+        pango_context_set_round_glyph_positions(text.context, false);
+        text.layout = pango_layout_new(text.context);
+        JS_SetContextOpaque(context, &text);
+        JSValue global = JS_GetGlobalObject(context);
+        JS_SetPropertyStr(context, global, "__peleMeasureText",
+                          JS_NewCFunction(context, measure_text, "__peleMeasureText", 4));
+        JS_FreeValue(context, global);
+#endif
+        JSValue value = JS_Eval(context, (const char *)pele_bundle, pele_bundle_len, "pele.global.js", JS_EVAL_TYPE_GLOBAL);
+        if (JS_IsException(value)) initialization_error = exception_message(context);
+        JS_FreeValue(context, value);
+        if (!initialization_error) {
+            value = JS_Eval(context, (const char *)pele_bridge, pele_bridge_len, "pele-bridge.js", JS_EVAL_TYPE_GLOBAL);
+            if (JS_IsException(value)) initialization_error = exception_message(context);
+            JS_FreeValue(context, value);
+        }
+        if (!initialization_error) {
+            JSValue global = JS_GetGlobalObject(context);
+            render = JS_GetPropertyStr(context, global, "__peleRender");
+            JS_FreeValue(context, global);
+            if (!JS_IsFunction(context, render)) initialization_error = strdup("Pele entry point is missing");
+        }
+    }
+    for (;;) {
+        pthread_mutex_lock(&engine.mutex);
+        while (!engine.head && !atomic_load(&engine.stopping)) pthread_cond_wait(&engine.condition, &engine.mutex);
+        if (atomic_load(&engine.stopping)) { pthread_mutex_unlock(&engine.mutex); break; }
+        job *item = engine.head;
+        engine.head = item->next;
+        if (!engine.head) engine.tail = NULL;
+        engine.active = item;
+        pthread_mutex_unlock(&engine.mutex);
+        char *json = NULL;
+        if (atomic_load(&item->cancelled)) json = failure("cancelled", "Rendering was cancelled");
+        else if (initialization_error) json = failure("engine", initialization_error);
+        else {
+            engine.timed_out = false;
+            engine.deadline = milliseconds() + item->timeout;
+            JSValue args[] = {
+                JS_NewStringLen(context, item->source, item->source_len),
+                JS_NewStringLen(context, item->options, item->options_len)
+            };
+            JSValue value = JS_IsException(args[0]) || JS_IsException(args[1])
+                ? JS_EXCEPTION : JS_Call(context, render, JS_UNDEFINED, 2, args);
+            JS_FreeValue(context, args[0]);
+            JS_FreeValue(context, args[1]);
+            if (JS_IsException(value)) {
+                char *message = exception_message(context);
+                json = failure(atomic_load(&item->cancelled) ? "cancelled" : engine.timed_out ? "timeout" : "engine",
+                               atomic_load(&item->cancelled) ? "Rendering was cancelled" : engine.timed_out ? "Rendering exceeded its time limit" : message ? message : "JavaScript engine failed");
+                free(message);
+            } else {
+                const char *text = JS_ToCString(context, value);
+                if (text) { json = strdup(text); JS_FreeCString(context, text); }
+                else { char *message = exception_message(context); json = failure("engine", message ? message : "Could not read the result"); free(message); }
+            }
+            JS_FreeValue(context, value);
+            // Reset the deadline before collection; the next call gets a fresh budget.
+            engine.deadline = milliseconds() + 10000;
+            JS_RunGC(runtime);
+        }
+        complete(item, json);
+    }
+    if (context) { JS_FreeValue(context, render); JS_FreeContext(context); }
+#ifdef PELE_USE_PANGO
+    if (text.layout) g_object_unref(text.layout);
+    if (text.context) g_object_unref(text.context);
+    if (text.fonts) g_object_unref(text.fonts);
+#endif
+    if (runtime) JS_FreeRuntime(runtime);
+    free(initialization_error);
+    return NULL;
+}
+
+static bool pending_exit(emacs_env *env) { return env->non_local_exit_check(env) != emacs_funcall_exit_return; }
+
+static emacs_value signal_error(emacs_env *env, const char *message) {
+    emacs_value text = env->make_string(env, message, (ptrdiff_t)strlen(message));
+    emacs_value data = env->funcall(env, env->intern(env, "list"), 1, &text);
+    env->non_local_exit_signal(env, env->intern(env, "error"), data);
+    return env->intern(env, "nil");
+}
+
+static char *copy_string(emacs_env *env, emacs_value value, size_t limit, size_t *length) {
+    ptrdiff_t size = 0;
+    if (!env->copy_string_contents(env, value, NULL, &size)) return NULL;
+    if (size < 1 || (size_t)size > limit + 1) { signal_error(env, "Pele input exceeds its size limit"); return NULL; }
+    char *text = malloc((size_t)size);
+    if (!text) { signal_error(env, "Not enough memory for the Pele request"); return NULL; }
+    if (!env->copy_string_contents(env, value, text, &size)) { free(text); return NULL; }
+    *length = (size_t)size - 1;
+    return text;
+}
+
+static int start_worker(void) {
+    if (engine.running) return 0;
+    atomic_store(&engine.stopping, false);
+    pthread_attr_t attributes;
+    pthread_attr_init(&attributes);
+    pthread_attr_setstacksize(&attributes, 8u * 1024u * 1024u);
+    int error = pthread_create(&engine.thread, &attributes, worker, NULL);
+    pthread_attr_destroy(&attributes);
+    if (!error) engine.running = true;
+    return error;
+}
+
+static emacs_value submit(emacs_env *env, ptrdiff_t nargs, emacs_value *args, void *data) {
+    (void)nargs; (void)data;
+    intmax_t id = env->extract_integer(env, args[0]);
+    if (pending_exit(env)) return env->intern(env, "nil");
+    intmax_t timeout = env->extract_integer(env, args[3]);
+    if (pending_exit(env)) return env->intern(env, "nil");
+    if (id < 1 || timeout < 1 || timeout > 60000) return signal_error(env, "Invalid Pele request id or timeout");
+    job *item = calloc(1, sizeof(*item));
+    if (!item) return signal_error(env, "Not enough memory for the Pele request");
+    item->output = calloc(1, sizeof(*item->output));
+    if (!item->output) { free_job(item); return signal_error(env, "Not enough memory for the Pele result"); }
+    item->id = id; item->timeout = (int)timeout;
+    atomic_init(&item->cancelled, false);
+    item->source = copy_string(env, args[1], INPUT_LIMIT, &item->source_len);
+    if (item->source) item->options = copy_string(env, args[2], OPTIONS_LIMIT, &item->options_len);
+    if (!item->source || !item->options) { free_job(item); return env->intern(env, "nil"); }
+    if (start_worker()) { free_job(item); return signal_error(env, "Could not start the Pele rendering thread"); }
+    pthread_mutex_lock(&engine.mutex);
+    if (engine.pending >= MAX_PENDING) {
+        pthread_mutex_unlock(&engine.mutex); free_job(item);
+        return signal_error(env, "Pele request queue is full");
+    }
+    engine.pending++;
+    if (engine.tail) engine.tail->next = item;
+    else engine.head = item;
+    engine.tail = item;
+    pthread_cond_signal(&engine.condition);
+    pthread_mutex_unlock(&engine.mutex);
+    return env->intern(env, "t");
+}
+
+static emacs_value poll_result(emacs_env *env, ptrdiff_t nargs, emacs_value *args, void *data) {
+    (void)nargs; (void)args; (void)data;
+    pthread_mutex_lock(&engine.mutex);
+    result *item = engine.done_head;
+    if (item) {
+        engine.done_head = item->next;
+        if (!engine.done_head) engine.done_tail = NULL;
+        engine.pending--;
+    }
+    pthread_mutex_unlock(&engine.mutex);
+    if (!item) return env->intern(env, "nil");
+    const char *json = item->json ? item->json : "{\"ok\":false,\"error\":{\"code\":\"memory\",\"message\":\"Not enough memory\"}}";
+    emacs_value values[] = {env->make_integer(env, item->id), env->make_string(env, json, (ptrdiff_t)strlen(json))};
+    free(item->json); free(item);
+    return env->funcall(env, env->intern(env, "list"), 2, values);
+}
+
+static emacs_value cancel(emacs_env *env, ptrdiff_t nargs, emacs_value *args, void *data) {
+    (void)nargs; (void)data;
+    intmax_t id = env->extract_integer(env, args[0]);
+    if (pending_exit(env)) return env->intern(env, "nil");
+    pthread_mutex_lock(&engine.mutex);
+    if (engine.active && engine.active->id == id) atomic_store(&engine.active->cancelled, true);
+    for (job *item = engine.head; item; item = item->next) if (item->id == id) atomic_store(&item->cancelled, true);
+    pthread_mutex_unlock(&engine.mutex);
+    return env->intern(env, "nil");
+}
+
+static emacs_value set_channel(emacs_env *env, ptrdiff_t nargs, emacs_value *args, void *data) {
+    (void)nargs; (void)data;
+    int fd = env->open_channel(env, args[0]);
+    if (pending_exit(env)) return env->intern(env, "nil");
+    if (fd < 0) return signal_error(env, "Could not open the Pele completion channel");
+    int flags = fcntl(fd, F_GETFL);
+    if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        close(fd);
+        return signal_error(env, "Could not configure the Pele completion channel");
+    }
+    pthread_mutex_lock(&engine.mutex);
+    if (engine.notify_fd >= 0) close(engine.notify_fd);
+    engine.notify_fd = fd;
+    pthread_mutex_unlock(&engine.mutex);
+    return env->intern(env, "t");
+}
+
+static void stop_worker(void) {
+    if (!engine.running) return;
+    atomic_store(&engine.stopping, true);
+    pthread_mutex_lock(&engine.mutex);
+    pthread_cond_signal(&engine.condition);
+    pthread_mutex_unlock(&engine.mutex);
+    pthread_join(engine.thread, NULL);
+    while (engine.head) { job *next = engine.head->next; free_job(engine.head); engine.head = next; }
+    while (engine.done_head) { result *next = engine.done_head->next; free(engine.done_head->json); free(engine.done_head); engine.done_head = next; }
+    engine.tail = NULL; engine.done_tail = NULL; engine.active = NULL;
+    engine.pending = 0; engine.running = false;
+}
+
+static emacs_value shutdown_engine(emacs_env *env, ptrdiff_t nargs, emacs_value *args, void *data) {
+    (void)nargs; (void)args; (void)data;
+    stop_worker();
+    pthread_mutex_lock(&engine.mutex);
+    if (engine.notify_fd >= 0) close(engine.notify_fd);
+    engine.notify_fd = -1;
+    pthread_mutex_unlock(&engine.mutex);
+    return env->intern(env, "nil");
+}
+
+static void bind_function(emacs_env *env, const char *name, ptrdiff_t arity,
+                          emacs_value (*function)(emacs_env *, ptrdiff_t, emacs_value *, void *), const char *doc) {
+    emacs_value args[] = {env->intern(env, name), env->make_function(env, arity, arity, function, doc, NULL)};
+    env->funcall(env, env->intern(env, "fset"), 2, args);
+}
+
+EXPORT int emacs_module_init(struct emacs_runtime *runtime) {
+    if (runtime->size < (ptrdiff_t)sizeof(*runtime)) return 1;
+    emacs_env *env = runtime->get_environment(runtime);
+    bind_function(env, "pele--native-submit", 4, submit, "Submit ID, SOURCE, OPTIONS-JSON and TIMEOUT-MS for background rendering.");
+    bind_function(env, "pele--native-poll", 0, poll_result, "Return the next (ID JSON) result, or nil.  Never block.");
+    bind_function(env, "pele--native-cancel", 1, cancel, "Cancel a queued or running request ID.");
+    bind_function(env, "pele--native-channel", 1, set_channel, "Notify pipe PROCESS when results are ready; creates no child process.");
+    bind_function(env, "pele--native-shutdown", 0, shutdown_engine, "Stop the renderer and release all queued work and engine memory.");
+    emacs_value feature = env->intern(env, "pele-native");
+    env->funcall(env, env->intern(env, "provide"), 1, &feature);
+    atexit(stop_worker);
+    return pending_exit(env) ? 1 : 0;
+}
