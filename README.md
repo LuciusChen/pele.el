@@ -174,7 +174,7 @@ Configuration in the diagram source takes precedence over `:config`. Gantt resul
 
 ## Compatibility
 
-Diagram syntax and layout follow **Pele**, including its differences from Mermaid.js. Syntax highlighting follows the official website's lexical rules; the renderer reports syntax errors and source locations when available.
+Diagram syntax and layout follow [Pele](https://github.com/obsidianmd/pele), including its differences from Mermaid.js. Syntax highlighting follows the official website's lexical rules; the renderer reports syntax errors and source locations when available.
 
 External icon libraries and mathematical typesetters are not bundled, so Pele's text fallback applies. Images and clickable links in diagrams are disabled.
 
@@ -186,6 +186,6 @@ Current dependency versions and source hashes are recorded in [vendor/README.md]
 
 ## License
 
-Project code is licensed under the [MIT License](LICENSE). Pele, QuickJS, the website highlighter and the documentation examples retain their upstream MIT licenses and copyright notices. Preserve those notices when redistributing sources or bundled modules. See [vendor/README.md](vendor/README.md) and [test/corpus/SOURCE.md](test/corpus/SOURCE.md) for versions, hashes and attribution.
+Project code is licensed under the [MIT License](LICENSE). [Pele](https://github.com/obsidianmd/pele), [QuickJS](https://github.com/bellard/quickjs), the website highlighter and the documentation examples retain their upstream MIT licenses and copyright notices. Preserve those notices when redistributing sources or bundled modules. See [vendor/README.md](vendor/README.md) and [test/corpus/SOURCE.md](test/corpus/SOURCE.md) for versions, hashes and attribution.
 
 Linux native bundles also include third-party font libraries under their own licenses, with notices and corresponding dependency sources provided alongside the binary archive.

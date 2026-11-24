@@ -2,8 +2,7 @@
 
 These `*-docs.json` files are copied without changes from:
 
-- Project: Pele, by kepano / Obsidian
-- Repository: https://github.com/obsidianmd/pele
+- Project: [Pele](https://github.com/obsidianmd/pele), by kepano / Obsidian
 - Commit: `3a2f075ee0c3d914f0fad3545fc0f193693975ac`
 - Original directory: `tests/corpus/`
 - License: MIT; the original license and copyright notice are retained in `LICENSE`

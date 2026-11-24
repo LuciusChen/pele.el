@@ -25,4 +25,4 @@ First public release.
 
 ### Bundled engines
 
-- Pele 1.13.0 and QuickJS 2026-06-04. Source archives, hashes and license notices are recorded in `vendor/README.md`.
+- [Pele](https://github.com/obsidianmd/pele) 1.13.0 and [QuickJS](https://github.com/bellard/quickjs) 2026-06-04. Source archives, hashes and license notices are recorded in [vendor/README.md](vendor/README.md).
