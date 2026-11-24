@@ -15,6 +15,12 @@
 #ifdef PELE_USE_PANGO
 #include <pango/pangocairo.h>
 #endif
+#ifdef PELE_USE_FONTCONFIG
+#include <pango/pangofc-fontmap.h>
+#endif
+#ifdef PELE_USE_CORETEXT
+#include <CoreText/CoreText.h>
+#endif
 #include "bundles.h"
 
 #define EXPORT __attribute__((visibility("default")))
@@ -105,11 +111,103 @@ typedef struct {
     PangoLayout *layout;
 } text_engine;
 
+#ifdef PELE_USE_FONTCONFIG
+static void configure_fonts(PangoFontMap *fonts) {
+    FcChar8 *filename = FcConfigFilename(NULL);
+    if (filename) {
+        bool readable = access((const char *)filename, R_OK) == 0;
+        FcStrFree(filename);
+        if (readable) return;
+    }
+    /* Minimal systems may have fonts but no /etc/fonts/fonts.conf.  Keep
+       this fallback private to our font map; never change Emacs's config. */
+    const FcChar8 fallback[] =
+        "<fontconfig><dir>/usr/share/fonts</dir><dir>/usr/local/share/fonts</dir>"
+        "<dir prefix=\"xdg\">fonts</dir><dir>~/.fonts</dir>"
+        "<cachedir prefix=\"xdg\">fontconfig</cachedir>"
+        "<include ignore_missing=\"yes\" prefix=\"xdg\">fontconfig/fonts.conf</include>"
+        "<include ignore_missing=\"yes\" prefix=\"xdg\">fontconfig/conf.d</include>"
+        "<alias><family>sans-serif</family><prefer><family>DejaVu Sans</family></prefer></alias>"
+        "<alias><family>serif</family><prefer><family>DejaVu Serif</family></prefer></alias>"
+        "<alias><family>monospace</family><prefer><family>DejaVu Sans Mono</family></prefer></alias>"
+        "</fontconfig>";
+    FcConfig *config = FcConfigCreate();
+    if (config) {
+        if (FcConfigParseAndLoadFromMemory(config, fallback, FcTrue) && FcConfigBuildFonts(config))
+            pango_fc_font_map_set_config(PANGO_FC_FONT_MAP(fonts), config);
+        FcConfigDestroy(config);
+    }
+}
+#endif
+#endif
+
+#ifdef PELE_USE_CORETEXT
+/* Preserve the CSS family order for both the base font and missing glyphs. */
+static CTFontRef find_font(const char *family, double size, int32_t style) {
+    CFStringRef names = CFStringCreateWithCString(NULL, family, kCFStringEncodingUTF8);
+    if (!names) return NULL;
+    CFArrayRef families = CFStringCreateArrayBySeparatingStrings(NULL, names, CFSTR(","));
+    CFRelease(names);
+    const void *key = kCTFontFamilyNameAttribute;
+    CFSetRef mandatory = CFSetCreate(NULL, &key, 1, &kCFTypeSetCallBacks);
+    CFMutableArrayRef cascade = CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks);
+    CTFontSymbolicTraits traits = (style & 1 ? kCTFontBoldTrait : 0) | (style & 2 ? kCTFontItalicTrait : 0);
+    CFNumberRef trait_number = CFNumberCreate(NULL, kCFNumberSInt32Type, &traits);
+    const void *trait_key = kCTFontSymbolicTrait, *trait_value = trait_number;
+    CFDictionaryRef font_traits = CFDictionaryCreate(NULL, &trait_key, &trait_value, 1,
+                                                      &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CTFontRef font = NULL;
+    for (CFIndex i = 0; i < CFArrayGetCount(families); i++) {
+        CFMutableStringRef name = CFStringCreateMutableCopy(NULL, 0, CFArrayGetValueAtIndex(families, i));
+        CFStringTrimWhitespace(name);
+        CFStringRef resolved = name;
+        if (CFStringCompare(name, CFSTR("sans-serif"), kCFCompareCaseInsensitive) == 0) resolved = CFSTR("Helvetica");
+        else if (CFStringCompare(name, CFSTR("serif"), kCFCompareCaseInsensitive) == 0) resolved = CFSTR("Times");
+        else if (CFStringCompare(name, CFSTR("monospace"), kCFCompareCaseInsensitive) == 0) resolved = CFSTR("Menlo");
+        const void *keys[] = {kCTFontFamilyNameAttribute, kCTFontTraitsAttribute};
+        const void *values[] = {resolved, font_traits};
+        CFDictionaryRef attributes = CFDictionaryCreate(NULL, keys, values, 2,
+                                                         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        CTFontDescriptorRef request = CTFontDescriptorCreateWithAttributes(attributes);
+        CTFontDescriptorRef match = CTFontDescriptorCreateMatchingFontDescriptor(request, mandatory);
+        if (match) {
+            if (!font) font = CTFontCreateWithFontDescriptor(match, size, NULL);
+            CFArrayAppendValue(cascade, match);
+            CFRelease(match);
+        }
+        CFRelease(request);
+        CFRelease(attributes);
+        CFRelease(name);
+    }
+    CFRelease(mandatory);
+    CFRelease(families);
+    CFRelease(font_traits);
+    CFRelease(trait_number);
+    if (!font) font = CTFontCreateWithName(CFSTR("Helvetica"), size, NULL);
+    if (font && traits) {
+        CTFontRef variant = CTFontCreateCopyWithSymbolicTraits(font, size, NULL, traits, traits);
+        if (variant) { CFRelease(font); font = variant; }
+    }
+    if (font && CFArrayGetCount(cascade)) {
+        const void *cascade_key = kCTFontCascadeListAttribute, *value = cascade;
+        CFDictionaryRef attributes = CFDictionaryCreate(NULL, &cascade_key, &value, 1,
+                                                         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        CTFontDescriptorRef descriptor = CTFontDescriptorCreateWithAttributes(attributes);
+        CTFontRef combined = CTFontCreateCopyWithAttributes(font, size, NULL, descriptor);
+        if (combined) { CFRelease(font); font = combined; }
+        CFRelease(descriptor);
+        CFRelease(attributes);
+    }
+    CFRelease(cascade);
+    return font;
+}
+#endif
+
+#if defined(PELE_USE_PANGO) || defined(PELE_USE_CORETEXT)
 static JSValue measure_text(JSContext *context, JSValueConst this_value,
                             int argc, JSValueConst *args) {
     (void)this_value;
     if (argc != 4) return JS_ThrowTypeError(context, "Expected text, size, style and font family");
-    text_engine *text = JS_GetContextOpaque(context);
     double size;
     int32_t style;
     if (JS_ToFloat64(context, &size, args[1]) || JS_ToInt32(context, &style, args[2])) return JS_EXCEPTION;
@@ -119,6 +217,8 @@ static JSValue measure_text(JSContext *context, JSValueConst this_value,
     if (!label) return JS_EXCEPTION;
     const char *family = JS_ToCString(context, args[3]);
     if (!family) { JS_FreeCString(context, label); return JS_EXCEPTION; }
+#ifdef PELE_USE_PANGO
+    text_engine *text = JS_GetContextOpaque(context);
     PangoFontDescription *font = pango_font_description_new();
     pango_font_description_set_family(font, family);
     pango_font_description_set_absolute_size(font, size * PANGO_SCALE);
@@ -129,9 +229,28 @@ static JSValue measure_text(JSContext *context, JSValueConst this_value,
     PangoRectangle logical;
     pango_layout_get_extents(text->layout, NULL, &logical);
     pango_font_description_free(font);
+    double width = (double)logical.width / PANGO_SCALE;
+#else
+    CFStringRef string = CFStringCreateWithBytes(NULL, (const UInt8 *)label, (CFIndex)length, kCFStringEncodingUTF8, false);
+    CTFontRef font = find_font(family, size, style);
+    double width = -1;
+    if (string && font) {
+        const void *key = kCTFontAttributeName, *value = font;
+        CFDictionaryRef attributes = CFDictionaryCreate(NULL, &key, &value, 1,
+                                                         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        CFAttributedStringRef attributed = CFAttributedStringCreate(NULL, string, attributes);
+        CTLineRef line = CTLineCreateWithAttributedString(attributed);
+        width = CTLineGetTypographicBounds(line, NULL, NULL, NULL);
+        CFRelease(line);
+        CFRelease(attributed);
+        CFRelease(attributes);
+    }
+    if (font) CFRelease(font);
+    if (string) CFRelease(string);
+#endif
     JS_FreeCString(context, family);
     JS_FreeCString(context, label);
-    return JS_NewFloat64(context, (double)logical.width / PANGO_SCALE);
+    return width < 0 ? JS_ThrowInternalError(context, "Could not measure label") : JS_NewFloat64(context, width);
 }
 #endif
 
@@ -186,6 +305,9 @@ static void *worker(void *unused) {
     else {
 #ifdef PELE_USE_PANGO
         text.fonts = pango_cairo_font_map_new();
+#ifdef PELE_USE_FONTCONFIG
+        configure_fonts(text.fonts);
+#endif
         text.context = pango_font_map_create_context(text.fonts);
         pango_cairo_context_set_resolution(text.context, 96.0);
         cairo_font_options_t *font_options = cairo_font_options_create();
@@ -195,6 +317,8 @@ static void *worker(void *unused) {
         pango_context_set_round_glyph_positions(text.context, false);
         text.layout = pango_layout_new(text.context);
         JS_SetContextOpaque(context, &text);
+#endif
+#if defined(PELE_USE_PANGO) || defined(PELE_USE_CORETEXT)
         JSValue global = JS_GetGlobalObject(context);
         JS_SetPropertyStr(context, global, "__peleMeasureText",
                           JS_NewCFunction(context, measure_text, "__peleMeasureText", 4));

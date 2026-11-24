@@ -1,7 +1,7 @@
 ;;; pele.el --- Mermaid SVG previews using upstream Pele -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 pele.el contributors
-;; Version: 0.1.5
+;; Version: 0.0.1
 ;; Package-Requires: ((emacs "29.1"))
 ;; URL: https://github.com/LuciusChen/pele.el
 ;; Keywords: multimedia, tools, outlines
@@ -12,8 +12,8 @@
 ;; A persistent worker owns the JavaScript runtime; it never calls Emacs APIs.
 ;; `pele-preview' previews a region, a Mermaid code block, or the whole buffer.
 ;; `pele-org-mode' adds live previews below Mermaid source blocks.
-;; Build the module with `make' before using this package.  No Node.js, browser,
-;; network connection, or external rendering process is needed at runtime.
+;; Download the module with `pele-download-module', or build it with `make'.
+;; Rendering needs no Node.js, browser, network connection or external process.
 
 ;;; Code:
 
@@ -37,6 +37,8 @@
 
 (defgroup pele nil "Mermaid SVG previews with Pele." :group 'multimedia)
 
+(require 'pele-module)
+
 (defcustom pele-font-family
   (if (eq system-type 'darwin) "Helvetica Neue, Arial, sans-serif"
     "Inter, Noto Sans, DejaVu Sans, sans-serif")
@@ -50,7 +52,8 @@
 
 (defcustom pele-text-measurement 'native
   "Measure label widths with the SVG font backend when available.
-`native' uses Pango when built in, falling back to Pele's estimates.
+`native' uses Core Text on macOS or Pango when built in on Linux,
+falling back to Pele's estimates when no font backend is available.
 `estimate' uses the upstream built-in width table for reproducibility."
   :type '(choice (const native) (const estimate)))
 
@@ -88,7 +91,7 @@ An alist uses string keys such as \"--pele-bg\" and CSS color values."
 `theme' fills the canvas with the selected theme's background color."
   :type '(choice (const transparent) (const theme)))
 
-(defconst pele-version "0.1.5")
+(defconst pele-version "0.0.1")
 (defconst pele-engine-version "1.13.0")
 (defconst pele--directory
   (file-name-directory (or load-file-name buffer-file-name default-directory)))
@@ -108,16 +111,14 @@ An alist uses string keys such as \"--pele-bg\" and CSS color values."
 (defvar pele--cache-order nil)
 (defvar pele--cache-bytes 0)
 
-(defun pele--ensure-module ()
-  "Load the native renderer, explaining how to build it when missing."
+(defun pele--ensure-module (&optional prompt)
+  "Load the native renderer; allow a download PROMPT at interactive use."
   (unless (featurep 'pele-native)
     (unless module-file-suffix
       (user-error "This Emacs was built without dynamic module support"))
-    (let ((file (expand-file-name (concat "pele-native" module-file-suffix)
-                                  pele--directory)))
-      (unless (file-exists-p file)
-        (user-error "Build Pele first: run make in %s" pele--directory))
-      (load file nil t t)))
+    (let ((file (pele--module-file prompt)))
+      (load file nil t t)
+      (setq pele--loaded-module-file file)))
   (unless (process-live-p pele--channel)
     (setq pele--channel
           (make-pipe-process :name "pele-completions" :noquery t :coding 'no-conversion
@@ -441,6 +442,7 @@ Interactive previews use the asynchronous API instead."
   "Render the source associated with the current preview buffer again."
   (interactive)
   (unless pele--preview-source (user-error "This buffer has no diagram source"))
+  (when (called-interactively-p 'interactive) (pele--ensure-module t))
   (pele--preview-cleanup)
   (let ((buffer (current-buffer)) (width (pele--window-width)))
     (setq pele--preview-request
@@ -474,6 +476,7 @@ Interactive previews use the asynchronous API instead."
   "Preview the region, current Mermaid code block, or Mermaid buffer."
   (interactive)
   (let ((source (pele--source-at-point)))
+    (when (called-interactively-p 'interactive) (pele--ensure-module t))
     (pop-to-buffer (get-buffer-create "*Pele Preview*"))
     (unless (derived-mode-p 'pele-preview-mode) (pele-preview-mode))
     (setq pele--preview-source source header-line-format " Rendering diagram…")
@@ -483,6 +486,7 @@ Interactive previews use the asynchronous API instead."
 (defun pele-export (file)
   "Render the current diagram and write SVG to FILE."
   (interactive (list (read-file-name "Export SVG: " nil nil nil "diagram.svg")))
+  (when (called-interactively-p 'interactive) (pele--ensure-module t))
   (let ((result (pele-render (pele--source-at-point)))
         (coding-system-for-write 'utf-8-unix))
     (with-temp-file file (insert (plist-get result :svg))))
@@ -612,7 +616,11 @@ Previews are overlays and do not modify the Org file."
         (unless (derived-mode-p 'org-mode)
           (setq pele-org-mode nil)
           (user-error "Pele Org mode requires an Org buffer"))
-        (pele--inline-enable #'pele--org-blocks))
+        (condition-case err
+            (progn
+              (when (called-interactively-p 'interactive) (pele--ensure-module t))
+              (pele--inline-enable #'pele--org-blocks))
+          (error (setq pele-org-mode nil) (signal (car err) (cdr err)))))
     (when (eq pele--inline-blocks-function #'pele--org-blocks)
       (pele--inline-disable))))
 

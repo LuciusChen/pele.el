@@ -19,23 +19,11 @@ Screenshots use Ashen Night, PragmataPro and Org Modern, with an opaque Emacs wi
 
 ## Installation
 
-Build from source on macOS or Linux. Editing and highlighting can also be used on their own, without building the renderer.
-
-Requirements:
-
-- Emacs 29.1+ with dynamic module support; SVG image support for previews.
-- A C compiler with pthreads, Make, Python 3.10+ and `emacs-module.h` from your Emacs installation.
-- Recommended: `pkg-config` and Pango 1.44+ development files (`pangocairo`) for accurate font measurements. Without Pango, the renderer uses Pele's built-in width estimates.
-
-Install the optional font backend with `brew install pkg-config pango` on Homebrew, or `apt install pkg-config libpango1.0-dev` on Debian/Ubuntu. Then:
+Install the Lisp files with your package manager, or clone the repository:
 
 ```sh
 git clone https://github.com/LuciusChen/pele.el.git ~/repos/pele.el
-cd ~/repos/pele.el
-make -j4
 ```
-
-If Emacs or its header is elsewhere, use `make EMACS=/path/to/emacs EMACS_INCLUDE=/path/to/include`. Keep the resulting `pele-native.dylib` (macOS) or `pele-native.so` (Linux) alongside `pele.el`.
 
 Add to your Emacs configuration:
 
@@ -45,7 +33,36 @@ Add to your Emacs configuration:
 (add-hook 'org-mode-hook #'pele-org-mode)
 ```
 
-For editing and highlighting alone, require `pele-mode` instead. Loading the Lisp files does not load the native renderer until the first render.
+Run **`M-x pele-download-module`** once to install the prebuilt renderer matching your installed package version. No compiler, Node.js or Mermaid CLI is needed. Prebuilt modules support macOS 12+ and glibc Linux 2.35+, on both Apple Silicon/ARM64 and x86-64. Emacs 29.1+ with dynamic modules is required; previews also need SVG image support. The installer uses HTTPS and the system's `tar` command. Downloads are also available on the [Releases page](https://github.com/LuciusChen/pele.el/releases).
+
+By default, interactive preview/export commands and interactively enabling a preview mode offer to download a missing module. For previews enabled by mode hooks, install it manually first or opt into downloading at the first render:
+
+```elisp
+(setq pele-module-auto-install 'download) ; default: 'ask; nil: install manually
+```
+
+Loading the package never downloads anything. Downloads are pinned to the exact Elisp version, verified before installation, and stored under `pele/modules/` in your Emacs user directory. Customize `pele-module-directory` to change that location. Package updates do not remove downloaded modules. With `C-u M-x pele-download-module`, reinstall a module after restarting Emacs; loaded native files are never replaced.
+
+For editing and highlighting alone, require `pele-mode`. The renderer is loaded only when needed.
+
+### Build from source
+
+Source builds support macOS and Linux and take precedence over downloaded modules.
+
+Requirements:
+
+- A C compiler with pthreads, Make, Python 3.10+ and `emacs-module.h` from your Emacs installation.
+- macOS uses the system Core Text framework for accurate font measurements.
+- On Linux, recommended: `pkg-config` and Pango 1.44+ development files (`pangocairo`, `pangofc`, `fontconfig`). Without Pango, the renderer uses Pele's built-in width estimates.
+
+On Debian/Ubuntu, install the optional font backend with `apt install pkg-config libpango1.0-dev`. macOS needs no additional font libraries. Then:
+
+```sh
+cd ~/repos/pele.el
+make -j4
+```
+
+If Emacs or its header is elsewhere, use `make EMACS=/path/to/emacs EMACS_INCLUDE=/path/to/include`. Keep the resulting `pele-native.dylib` (macOS) or `pele-native.so` (Linux) alongside `pele.el`.
 
 ## Usage
 
@@ -114,7 +131,16 @@ The default transparent canvas lets the Emacs buffer show through; boxes, circle
 
 `pele-theme` accepts `auto` (Emacs foreground/background plus Pele's palette), `pele` (the full official light/dark palette), `light`, `dark`, or an alist of CSS variables such as `(("--pele-bg" . "#202124") ("--pele-fg" . "#eeeeee"))`.
 
-Other user options include `pele-font-size`, `pele-font-family`, `pele-font-family-mono`, `pele-preview-delay`, `pele-render-timeout`, `pele-cache-size` and `pele-cache-byte-limit`. Font measurements use Pango when available, including bold, italic and monospace labels. Browser and Emacs SVG display can still differ slightly.
+Other user options include `pele-font-size`, `pele-font-family`, `pele-font-family-mono`, `pele-preview-delay`, `pele-render-timeout`, `pele-cache-size` and `pele-cache-byte-limit`. Font measurements use Core Text on macOS and Pango on Linux, including bold, italic and monospace labels. Browser and Emacs SVG display can still differ slightly.
+
+Diagram fonts are configured separately from the Emacs buffer font. Use a comma-separated family list for fallback fonts, for example on macOS:
+
+```elisp
+(setq pele-font-family "Helvetica Neue, PingFang SC, sans-serif"
+      pele-font-family-mono "PragmataPro, PingFang SC, monospace")
+```
+
+Both layout measurements and SVG labels use these families. Fonts must be installed locally; missing families and glyphs fall back to the next available font. No fonts are bundled.
 
 ## Lisp API
 
@@ -139,7 +165,7 @@ Both functions accept an options plist:
 | Options | Meaning |
 | --- | --- |
 | `:font-size`, `:font-family`, `:font-family-mono` | Label size in pixels and font families |
-| `:measure-text` | `native` (Pango if built in) or `estimate` (upstream width table) |
+| `:measure-text` | `native` (Core Text or Pango if built in) or `estimate` (upstream width table) |
 | `:theme`, `:background` | Same values as the corresponding user options |
 | `:max-width`, `:auto-direction` | Width constraint; opt in to choosing direction instead of preserving the source direction |
 | `:timeout` | Render deadline in milliseconds, from 1 to 60,000; default 1,000 |
@@ -165,3 +191,5 @@ Current dependency versions and source hashes are recorded in [vendor/README.md]
 ## License
 
 Project code is licensed under the [MIT License](LICENSE). Pele, QuickJS, the website highlighter and the documentation examples retain their upstream MIT licenses and copyright notices. Preserve those notices when redistributing sources or bundled modules. See [vendor/README.md](vendor/README.md) and [test/corpus/SOURCE.md](test/corpus/SOURCE.md) for versions, hashes and attribution.
+
+Linux native bundles also include third-party font libraries under their own licenses, with notices and corresponding dependency sources provided alongside the binary archive.

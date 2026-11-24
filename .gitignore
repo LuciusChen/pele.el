@@ -1,4 +1,5 @@
 /build/
+/dist/
 /pele-native.so
 /pele-native.dylib
 /*.elc

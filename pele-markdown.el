@@ -1,8 +1,8 @@
 ;;; pele-markdown.el --- Live Mermaid previews in Markdown -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 pele.el contributors
-;; Version: 0.1.5
-;; Package-Requires: ((emacs "29.1") (pele "0.1.5"))
+;; Version: 0.0.1
+;; Package-Requires: ((emacs "29.1") (pele "0.0.1"))
 ;; URL: https://github.com/LuciusChen/pele.el
 ;; Keywords: multimedia, text
 ;; SPDX-License-Identifier: MIT
@@ -159,7 +159,11 @@ Previews are overlays and do not modify the Markdown file."
         (unless (derived-mode-p 'markdown-mode 'markdown-ts-mode)
           (setq pele-markdown-mode nil)
           (user-error "Pele Markdown mode requires a Markdown buffer"))
-        (pele--inline-enable #'pele-markdown--blocks))
+        (condition-case err
+            (progn
+              (when (called-interactively-p 'interactive) (pele--ensure-module t))
+              (pele--inline-enable #'pele-markdown--blocks))
+          (error (setq pele-markdown-mode nil) (signal (car err) (cdr err)))))
     (when (eq pele--inline-blocks-function #'pele-markdown--blocks)
       (pele--inline-disable))))
 

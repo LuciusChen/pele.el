@@ -1,0 +1,8 @@
+.git
+build
+dist
+test/output
+*.elc
+*.eln
+pele-native.so
+pele-native.dylib

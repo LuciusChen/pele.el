@@ -1,7 +1,7 @@
 ;;; pele-mode.el --- Edit Mermaid sources without external tools -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026 pele.el contributors
-;; Version: 0.1.5
+;; Version: 0.0.1
 ;; Package-Requires: ((emacs "29.1"))
 ;; URL: https://github.com/LuciusChen/pele.el
 ;; Keywords: languages, tools

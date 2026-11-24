@@ -1,7 +1,7 @@
 ;;; ob-pele.el --- Org Babel SVG output with Pele -*- lexical-binding: t; -*-
 
-;; Version: 0.1.5
-;; Package-Requires: ((emacs "29.1") (pele "0.1.5"))
+;; Version: 0.0.1
+;; Package-Requires: ((emacs "29.1") (pele "0.0.1"))
 ;; URL: https://github.com/LuciusChen/pele.el
 ;; Keywords: outlines, tools
 ;; SPDX-License-Identifier: MIT

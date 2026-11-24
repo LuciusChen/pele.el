@@ -1,6 +1,6 @@
 ;;; pele-font-lock.el --- Pele website highlighting in pure Elisp -*- lexical-binding: t; -*-
 
-;; Version: 0.1.5
+;; Version: 0.0.1
 ;; Package-Requires: ((emacs "29.1"))
 ;; URL: https://github.com/LuciusChen/pele.el
 ;; SPDX-License-Identifier: MIT

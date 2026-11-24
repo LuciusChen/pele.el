@@ -1,0 +1,207 @@
+;;; pele-module-tests.el --- Module installation regression tests -*- lexical-binding: t; -*-
+;; SPDX-License-Identifier: MIT
+
+(require 'ert)
+(require 'pele)
+(require 'url)
+
+(defmacro pele-module-test--environment (&rest body)
+  "Run BODY with an isolated module cache and no source build."
+  (declare (indent 0))
+  `(let* ((root (make-temp-file "pele-install-test-" t))
+          (pele-module-directory (expand-file-name "cache/" root))
+          (pele--directory (expand-file-name "source/" root))
+          (pele-module-auto-install nil))
+     (make-directory pele--directory)
+     (unwind-protect
+         (cl-letf (((symbol-function 'pele--module-check-host) #'ignore)) ,@body)
+       (delete-directory root t))))
+
+(defun pele-module-test--fixture (directory)
+  "Create a valid bundle fixture in DIRECTORY; return its manifest."
+  (make-directory directory t)
+  (let* ((name (concat "pele-native" module-file-suffix))
+         (file (expand-file-name name directory))
+         (files (make-hash-table :test #'equal))
+         (manifest (make-hash-table :test #'equal)))
+    (let ((coding-system-for-write 'no-conversion))
+      (with-temp-file file
+        (set-buffer-multibyte nil)
+        (insert (string-as-unibyte "fixture module bytes\0\377"))))
+    (puthash name (pele--module-hash file) files)
+    (dolist (entry `(("version" . ,pele-version) ("moduleABI" . 1)
+                     ("platform" . ,(if (eq system-type 'darwin) "darwin" "linux"))
+                     ("architecture" . ,(cadr (split-string (pele--module-platform) "-")))
+                     ("files" . ,files)))
+      (puthash (car entry) (cdr entry) manifest))
+    (pele-module-test--write-manifest directory manifest)
+    manifest))
+
+(defun pele-module-test--write-manifest (directory manifest)
+  "Write MANIFEST into DIRECTORY."
+  (with-temp-file (expand-file-name "manifest.json" directory)
+    (insert (json-serialize manifest))))
+
+(defun pele-module-test--archive (directory archive)
+  "Pack fixture DIRECTORY into ARCHIVE."
+  (should (eq 0 (process-file "tar" nil nil nil "-czf" archive "-C" directory "."))))
+
+(ert-deftest pele-module-detects-emacs-architecture-and-rejects-unsupported-hosts ()
+  (dolist (case '((darwin "aarch64-apple-darwin" "macos-aarch64")
+                  (darwin "x86_64-apple-darwin" "macos-x86_64")
+                  (gnu/linux "arm64-linux-gnu" "linux-aarch64")
+                  (gnu/linux "x86_64-pc-linux-gnu" "linux-x86_64")))
+    (let ((system-type (nth 0 case)) (system-configuration (nth 1 case)))
+      (should (equal (nth 2 case) (pele--module-platform)))))
+  (dolist (configuration '("x86_64-linux-musl" "aarch64-linux-android" "i686-linux-gnu"))
+    (let ((system-type 'gnu/linux) (system-configuration configuration))
+      (should-error (pele--module-platform) :type 'user-error))))
+
+(ert-deftest pele-module-checks-minimum-system-version ()
+  (dolist (case '((darwin "11.7" t) (darwin "12.0" nil)
+                  (gnu/linux "2.34" t) (gnu/linux "2.35" nil)))
+    (let ((system-type (nth 0 case)))
+      (cl-letf (((symbol-function 'pele--module-host-version) (lambda (&rest _) (nth 1 case))))
+        (if (nth 2 case) (should-error (pele--module-check-host) :type 'user-error)
+          (should-not (pele--module-check-host)))))))
+
+(ert-deftest pele-module-parses-the-complete-host-version ()
+  (dolist (case '(("26.7.2\n" "26.7.2") ("glibc 2.35\n" "2.35")))
+    (cl-letf (((symbol-function 'executable-find) (lambda (_) "/program"))
+              ((symbol-function 'process-file) (lambda (&rest _) (insert (car case)) 0)))
+      (should (equal (cadr case) (pele--module-host-version "program"))))))
+
+(ert-deftest pele-module-host-checks-run-locally-from-remote-buffers ()
+  (let ((default-directory "/ssh:example.invalid:/"))
+    (cl-letf (((symbol-function 'executable-find) (lambda (_) "/program"))
+              ((symbol-function 'process-file)
+               (lambda (&rest _)
+                 (should-not (file-remote-p default-directory))
+                 (insert "glibc 2.35\n") 0)))
+      (should (equal "2.35" (pele--module-host-version "program"))))))
+
+(ert-deftest pele-module-locates-source-build-before-cache-without-network ()
+  (pele-module-test--environment
+    (let ((local (expand-file-name (concat "pele-native" module-file-suffix) pele--directory)))
+      (with-temp-file local (insert "source build"))
+      (cl-letf (((symbol-function 'pele--module-fetch) (lambda (&rest _) (ert-fail "Unexpected network"))))
+        (should (equal local (pele--module-file)))))))
+
+(ert-deftest pele-module-validates-version-abi-platform-and-file-content ()
+  (pele-module-test--environment
+    (let* ((directory (pele--module-install-directory))
+           (manifest (pele-module-test--fixture directory))
+           (module (expand-file-name (concat "pele-native" module-file-suffix) directory)))
+      (should (equal module (pele--module-file)))
+      (dolist (entry '(("version" . "99.0.0") ("moduleABI" . 999)
+                       ("platform" . "windows") ("architecture" . "i686")))
+        (let ((original (gethash (car entry) manifest)))
+          (puthash (car entry) (cdr entry) manifest)
+          (pele-module-test--write-manifest directory manifest)
+          (should-error (pele--module-validate directory))
+          (puthash (car entry) original manifest)))
+      (pele-module-test--write-manifest directory manifest)
+      (with-temp-file module (insert "corrupted"))
+      (should-error (pele--module-validate directory)))))
+
+(ert-deftest pele-module-asks-only-at-explicit-interactive-use ()
+  (pele-module-test--environment
+    (let ((pele-module-auto-install 'ask) (noninteractive nil) (asked 0))
+      (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) (cl-incf asked) t))
+                ((symbol-function 'pele-download-module) (lambda (&rest _) "downloaded")))
+        (should-error (pele--module-file) :type 'user-error)
+        (should (= 0 asked))
+        (should (equal "downloaded" (pele--module-file t)))
+        (should (= 1 asked))
+        (let ((noninteractive t)) (should-error (pele--module-file t) :type 'user-error))
+        (should (= 1 asked))))))
+
+(ert-deftest pele-module-opt-in-download-policy-works-with-mode-hooks ()
+  (pele-module-test--environment
+    (let ((pele-module-auto-install 'download))
+      (cl-letf (((symbol-function 'pele-download-module) (lambda (&rest _) "downloaded")))
+        (should (equal "downloaded" (pele--module-file)))))))
+
+(ert-deftest pele-module-installs-a-verified-release-and-reuses-it-offline ()
+  (pele-module-test--environment
+    (let* ((fixture (expand-file-name "fixture/" root))
+           (archive (expand-file-name "bundle.tar.gz" root))
+           (directory (pele--module-install-directory))
+           urls)
+      (pele-module-test--fixture fixture)
+      (pele-module-test--archive fixture archive)
+      (cl-letf (((symbol-function 'pele--module-fetch)
+                 (lambda (url destination)
+                   (push url urls)
+                   (if (string-suffix-p ".sha256" url)
+                       (with-temp-file destination (insert (pele--module-hash archive) "  bundle.tar.gz\n"))
+                     (copy-file archive destination)))))
+        (let ((module (pele-download-module)))
+          (should (file-exists-p module))
+          (should (equal (expand-file-name (concat "pele-native" module-file-suffix) directory) module))
+          (should (equal module (pele--module-file)))
+          (should (equal module (pele-download-module)))
+          (should (= 2 (length urls)))
+          (should (cl-every (lambda (url) (string-search (concat "/download/v" pele-version "/") url)) urls)))))))
+
+(ert-deftest pele-module-checksum-failure-preserves-the-installed-copy ()
+  (pele-module-test--environment
+    (let* ((directory (pele--module-install-directory))
+           (_manifest (pele-module-test--fixture directory))
+           (module (pele--module-validate directory))
+           (original (pele--module-hash module)))
+      (cl-letf (((symbol-function 'pele--module-fetch)
+                 (lambda (_url destination) (with-temp-file destination (insert (make-string 64 ?0))))))
+        (should-error (pele-download-module t)))
+      (should (equal original (pele--module-hash (pele--module-validate directory))))
+      (should-not (directory-files (file-name-directory (directory-file-name directory)) nil "\\`\\.pele-")))))
+
+(ert-deftest pele-module-does-not-replace-an-active-library ()
+  (pele-module-test--environment
+    (let* ((directory (pele--module-install-directory))
+           (_manifest (pele-module-test--fixture directory))
+           (pele--loaded-module-file (pele--module-validate directory)))
+      (cl-progv '(features) (list (cons 'pele-native features))
+        (cl-letf (((symbol-function 'pele--module-fetch) (lambda (&rest _) (ert-fail "Unexpected network"))))
+          (should-error (pele-download-module t) :type 'user-error))))))
+
+(ert-deftest pele-module-rejects-unsafe-archive-paths-and-links ()
+  (pele-module-test--environment
+    (dolist (name '("../outside" "/outside" "lib/../../outside" "lib\\outside" "file\nname"))
+      (should-not (pele--module-safe-name-p name)))
+    (let ((fixture (expand-file-name "fixture/" root))
+          (archive (expand-file-name "links.tar.gz" root))
+          (destination (expand-file-name "extract/" root)))
+      (make-directory fixture)
+      (make-directory destination)
+      (make-symbolic-link "/tmp" (expand-file-name "link" fixture))
+      (pele-module-test--archive fixture archive)
+      (should-error (pele--module-unpack archive destination))
+      (should-not (directory-files destination nil "[^.]")))))
+
+(ert-deftest pele-module-http-download-checks-status-and-preserves-binary-bytes ()
+  (pele-module-test--environment
+    (let ((destination (expand-file-name "result.tar.gz" root))
+          (bytes (unibyte-string 10 0 31 127 128 255)))
+      (dolist (status '(404 200))
+        (cl-letf (((symbol-function 'url-retrieve-synchronously)
+                   (lambda (&rest _)
+                     (let ((buffer (generate-new-buffer " *pele-http-test*")))
+                       (with-current-buffer buffer
+                         (set-buffer-multibyte nil)
+                         (insert "HTTP response\r\n\r\n")
+                         (setq-local url-http-response-status status
+                                     url-http-end-of-headers (copy-marker (1- (point))))
+                         (insert bytes))
+                       buffer))))
+          (if (= status 404)
+              (progn (should-error (pele--module-fetch "https://example.org/bundle" destination))
+                     (should-not (file-exists-p destination)))
+            (pele--module-fetch "https://example.org/bundle" destination)
+            (with-temp-buffer
+              (set-buffer-multibyte nil)
+              (insert-file-contents-literally destination)
+              (should (equal bytes (buffer-string))))))))))
+
+(provide 'pele-module-tests)
+;;; pele-module-tests.el ends here

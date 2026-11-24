@@ -73,6 +73,7 @@
   (should-error (pele--source-at-point) :type 'user-error))
 
 (pele-markdown-test--deftest renders-without-changing-buffer
+  (skip-unless (image-type-available-p 'svg))
   (insert "# Diagram\n\n```mermaid\nflowchart LR\nA-->B\n```\n")
   (set-buffer-modified-p nil)
   (let ((source (buffer-string)) (mode major-mode))

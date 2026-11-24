@@ -1,0 +1,72 @@
+name: Native packages
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ['src/**', 'vendor/**', 'scripts/**', 'test/**', '*.el', 'Makefile', '.dockerignore', '.github/workflows/packages.yml']
+  pull_request:
+    paths: ['src/**', 'vendor/**', 'scripts/**', 'test/**', '*.el', 'Makefile', '.dockerignore', '.github/workflows/packages.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Emacs
+        run: brew install emacs
+      - name: Build, test and package
+        run: make -j2 check package
+      - name: Verify the relocated module
+        run: |
+          mkdir "$RUNNER_TEMP/pele-bundle"
+          tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP/pele-bundle"
+          PELE_PACKAGE_DIR="$RUNNER_TEMP/pele-bundle" emacs -Q --batch --module-assertions -L . -L test -l scripts/verify-package.el
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.os }}
+          path: dist/*.tar.gz*
+          compression-level: 0
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build and verify a self-contained bundle
+        timeout-minutes: 10
+        run: docker build -f scripts/linux-package.Dockerfile --output type=local,dest=dist .
+      - name: Install SVG-capable Emacs
+        timeout-minutes: 5
+        run: |
+          if [ "$RUNNER_ARCH" = X64 ] && [ -f /etc/apt/apt-mirrors.txt ]; then
+            echo 'https://archive.ubuntu.com/ubuntu' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+          fi
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends emacs-gtk elpa-markdown-mode
+      - name: Verify previews with SVG support
+        timeout-minutes: 3
+        run: |
+          mkdir "$RUNNER_TEMP/pele-bundle"
+          tar -xzf $(find dist -name '*.tar.gz' ! -name '*-sources.tar.gz') -C "$RUNNER_TEMP/pele-bundle"
+          PELE_PACKAGE_DIR="$RUNNER_TEMP/pele-bundle" emacs -Q --batch --module-assertions -L . -L test -l scripts/verify-package.el
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.os }}
+          path: dist/*.tar.gz*
+          compression-level: 0

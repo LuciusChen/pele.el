@@ -231,6 +231,40 @@
   (let ((result (pele-render pele-test--flow '(:measure-text estimate))))
     (should (equal "estimate" (plist-get result :textMeasurement)))))
 
+(defun pele-test--font-family (generic)
+  "Resolve GENERIC to an installed family for font-order assertions."
+  (if (eq system-type 'darwin)
+      (if (equal generic "monospace") "Menlo" "Helvetica")
+    (when (executable-find "fc-match")
+      (with-temp-buffer
+        (when (eq 0 (process-file "fc-match" nil t nil "-f" "%{family[0]}" generic))
+          (let ((family (string-trim (buffer-string))))
+            (unless (string-empty-p family) family)))))))
+
+(ert-deftest pele-native-font-family-fallback-uses-available-fonts ()
+  (let* ((source "flowchart LR\nA[MMMMMMMMMMMM]")
+         (mono (pele-render source '(:font-family "monospace")))
+         (fallback (pele-render source '(:font-family "\"Pele Missing Font 07CF\", monospace, sans-serif"))))
+    (skip-unless (equal "native" (plist-get mono :textMeasurement)))
+    (should (= (plist-get mono :width) (plist-get fallback :width)))
+    ;; Pango and Core Text may resolve mixed generic aliases differently.
+    ;; Verify family order with actual installed names instead of aliases.
+    (let ((sans-family (pele-test--font-family "sans-serif"))
+          (mono-family (pele-test--font-family "monospace")))
+      (when (and sans-family mono-family)
+        (dolist (families (list (list sans-family mono-family) (list mono-family sans-family)))
+          (should (= (plist-get (pele-render source (list :font-family (car families))) :width)
+                     (plist-get (pele-render source (list :font-family (string-join families ", "))) :width))))))))
+
+(ert-deftest pele-native-font-measurement-follows-size-and-bold ()
+  (let* ((source "flowchart LR\nA[iiiiiiiiiiii]")
+         (plain (pele-render source '(:font-family "sans-serif" :font-size 16)))
+         (bold (pele-render "flowchart LR\nA[\"<b>iiiiiiiiiiii</b>\"]" '(:font-family "sans-serif" :font-size 16))))
+    (skip-unless (equal "native" (plist-get plain :textMeasurement)))
+    (should (> (plist-get bold :width) (plist-get plain :width)))
+    (should (> (plist-get (pele-render source '(:font-family "sans-serif" :font-size 32)) :width)
+               (plist-get plain :width)))))
+
 (ert-deftest pele-css-looking-label-is-not-rewritten ()
   (should (string-search "var(--example)"
                          (plist-get (pele-render "flowchart LR\nA[\"var(--example)\"]") :svg))))

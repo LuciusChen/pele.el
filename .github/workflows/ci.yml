@@ -5,17 +5,21 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Install build and test dependencies
         run: |
+          if [ "$RUNNER_ARCH" = X64 ] && [ -f /etc/apt/apt-mirrors.txt ]; then
+            echo 'https://archive.ubuntu.com/ubuntu' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+          fi
           sudo apt-get update
-          sudo apt-get install -y emacs-gtk build-essential python3 pkg-config libpango1.0-dev elpa-markdown-mode
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends emacs-gtk build-essential python3 pkg-config libpango1.0-dev elpa-markdown-mode
       - name: Build and validate
         run: make -j2 check
-      - name: Validate without Pango
+      - name: Validate width estimates
         run: |
           make clean
-          make -j2 check PANGO_LIBS= PANGO_CFLAGS=
+          make -j2 check TEXT_BACKEND=estimate
