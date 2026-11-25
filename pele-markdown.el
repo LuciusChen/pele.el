@@ -2,7 +2,7 @@
 
 ;; Copyright (C) 2026 pele.el contributors
 ;; Version: 0.0.1
-;; Package-Requires: ((emacs "29.1") (pele "0.0.1"))
+;; Package-Requires: ((emacs "29.1"))
 ;; URL: https://github.com/LuciusChen/pele.el
 ;; Keywords: multimedia, text
 ;; SPDX-License-Identifier: MIT
