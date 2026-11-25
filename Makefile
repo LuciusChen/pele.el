@@ -75,7 +75,7 @@ compile:
 	$(EMACS) -Q --batch -L . --eval '(setq byte-compile-error-on-warn t)' -f batch-byte-compile pele-font-lock.el pele-mode.el pele-module.el pele.el pele-markdown.el ob-pele.el
 
 test-lisp: compile
-	$(EMACS) -Q --batch -L . -L test -l pele-mode-tests -l pele-highlighting-tests -l pele-module-tests -f ert-run-tests-batch-and-exit
+	$(EMACS) -Q --batch -L . -L test -l pele-mode-tests -l pele-highlighting-tests -l pele-module-tests -l pele-package-tests -f ert-run-tests-batch-and-exit
 
 test-renderer: all compile
 	$(EMACS) -Q --batch --module-assertions -L . -L test $(if $(MARKDOWN_MODE_DIR),-L "$(MARKDOWN_MODE_DIR)") -l pele-tests -l pele-markdown-tests -f ert-run-tests-batch-and-exit

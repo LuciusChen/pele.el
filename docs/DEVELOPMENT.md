@@ -59,7 +59,7 @@ For local timing, run `emacs -Q --batch -L . -l scripts/benchmark.el`. Results g
 
 ## Releases
 
-The `Native packages` workflow builds and verifies macOS and Linux bundles for Apple Silicon/ARM64 and x86-64. It uploads workflow artifacts for release preparation. Before tagging a release, wait for both `Tests` and `Native packages` to pass on the exact commit. Download that run's artifacts and publish all binary/source archives and checksum files under `v<pele-version>`. Keep all Elisp version headers and companion package requirements equal to `pele-version`.
+The `Native packages` workflow builds and verifies macOS and Linux bundles for Apple Silicon/ARM64 and x86-64. It uploads workflow artifacts for release preparation. Before tagging a release, wait for both `Tests` and `Native packages` to pass on the exact commit. Download that run's artifacts and publish all binary/source archives and checksum files under `v<pele-version>`. Keep all Elisp version headers equal to `pele-version`. The Lisp files form one package; their `Package-Requires` headers must list external dependencies, never `pele` itself.
 
 `pele-module.el` verifies the archive checksum and every manifest file, along with the exact Elisp version, platform and module ABI. Installation moves a verified staging directory into the module cache; failure preserves the old copy. See the README for download policies and user commands.
 

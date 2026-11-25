@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fix recursive startup activation for `package-vc` and `use-package :vc` installs by removing package self-dependencies from internal library headers.
 - Fit previews to both window dimensions and support keyboard focus, with `RET` opening the original-size diagram in Emacs's image viewer.
 - Share preview navigation between native Emacs, Meow and Evil movement commands while preserving counts, selections and operators.
 - Stop mouse-wheel retries when an inline preview at the end of a buffer cannot scroll further.
