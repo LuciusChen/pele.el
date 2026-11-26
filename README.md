@@ -33,7 +33,9 @@ Add to your Emacs configuration:
 (add-hook 'org-mode-hook #'pele-org-mode)
 ```
 
-Run **`M-x pele-download-module`** once to install the prebuilt renderer matching your installed package version. No compiler, Node.js or Mermaid CLI is needed. Prebuilt modules support macOS 12+ and glibc Linux 2.35+, on both Apple Silicon/ARM64 and x86-64. Emacs 29.1+ with dynamic modules is required; previews also need SVG image support. The installer uses HTTPS and the system's `tar` command. Downloads are also available on the [Releases page](https://github.com/LuciusChen/pele.el/releases).
+Run **`M-x pele-download-module`** once to install the prebuilt renderer matching your installed package version. No compiler, Node.js or Mermaid CLI is needed. Prebuilt modules target macOS 12+ and conventional glibc Linux distributions (glibc 2.35+), on both Apple Silicon/ARM64 and x86-64. Emacs 29.1+ with dynamic modules is required; previews also need SVG image support. The installer uses HTTPS and the system's `tar` command. Downloads are also available on the [Releases page](https://github.com/LuciusChen/pele.el/releases).
+
+NixOS users need to manage dependencies in their own Nix configuration and [build the module from source](#build-from-source).
 
 By default, interactive preview/export commands and interactively enabling a preview mode offer to download a missing module. For previews enabled by mode hooks, install it manually first or opt into downloading at the first render:
 
