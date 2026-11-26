@@ -1,6 +1,6 @@
-;;; benchmark.el --- Measure Pele API and highlighting latency -*- lexical-binding: t; -*-
+;;; pele-benchmark.el --- Measure Pele API and highlighting latency -*- lexical-binding: t; -*-
 ;; SPDX-License-Identifier: MIT
-;; Run: emacs -Q --batch -L . -l scripts/benchmark.el
+;; Run: emacs -Q --batch -L . -l scripts/pele-benchmark.el
 ;; Results are written to test/output/performance.json.  No GUI drawing is timed.
 
 (require 'cl-lib)

@@ -55,7 +55,7 @@ Optional modal tests use real Meow and Evil from `load-path`, including their co
 
 Keep the vendored engines unmodified and pinned. Update the website source, Elisp port and highlighting reference together. Keep editing independent of rendering, and use the existing API and worker for integrations. Add regression tests for observable failures; avoid a second Mermaid parser or new abstractions without a concrete need.
 
-For local timing, run `emacs -Q --batch -L . -l scripts/benchmark.el`. Results go to `test/output/performance.json` with normal GC settings. The measurements cover rendering, cache delivery, fontification and edits; GUI rasterization, redisplay, Emacs startup and the idle preview delay are excluded.
+For local timing, run `emacs -Q --batch -L . -l scripts/pele-benchmark.el`. Results go to `test/output/performance.json` with normal GC settings. The measurements cover rendering, cache delivery, fontification and edits; GUI rasterization, redisplay, Emacs startup and the idle preview delay are excluded.
 
 ## Releases
 
