@@ -902,7 +902,8 @@ Only their display properties change; links, files and undo stay intact."
          (collect-results (and images (not (equal key (car pele--org-results)))))
          (regions (unless collect-results (cdr pele--org-results))))
     (prog1
-        (org-element-map (org-element-parse-buffer) 'src-block
+        ;; Source blocks are elements; paragraph objects are irrelevant here.
+        (org-element-map (org-element-parse-buffer 'element) 'src-block
           (lambda (element)
             (when (pele--language-p (org-element-property :language element))
               (when collect-results

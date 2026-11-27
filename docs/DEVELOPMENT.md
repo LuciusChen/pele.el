@@ -23,7 +23,7 @@ Only the Emacs thread calls the Emacs module API. A completion pipe wakes Emacs;
 
 Org and Markdown share one inline preview lifecycle: block collectors return `:begin`, `:end` and `:source` plists; the common layer owns overlays, idle refreshes and cancellation. The legacy Markdown collector scans fence boundaries and uses `markdown-mode` syntax properties to exclude comments and indented code; this also handles long backtick fences that older versions do not recognize. The Tree-sitter collector uses the existing `markdown-ts-mode` Markdown tree. Neither creates a Mermaid parser or adds a Tree-sitter requirement to other modes.
 
-The preview loop encodes its settings key and measures the window once for all blocks. Cached image displays are reused until their image, fitted size or virtual cursor changes. Org result positions are keyed by the buffer's text modification counter and Babel results keyword; text edits invalidate them, while image refreshes and theme changes reuse them.
+The preview loop encodes its settings key and measures the window once for all blocks. Cached image displays are reused until their image, fitted size or virtual cursor changes. Org collection parses elements only, preserving nested source blocks while skipping paragraph objects. Org result positions are keyed by the buffer's text modification counter and Babel results keyword; text edits invalidate them, while image refreshes and theme changes reuse them.
 
 The JavaScript runtime has a 128 MiB memory limit. The bridge caps source at 50,000 characters, edges at 5,000 and upstream SVG at 4,000,000 characters. It resolves scoped CSS variables and corner radii for Emacs SVG display while preserving Pele's paths, labels and dimensions.
 

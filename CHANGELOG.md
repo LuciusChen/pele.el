@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reduce Org preview refresh cost by skipping unrelated inline objects when collecting diagram blocks.
 - Rename the development benchmark script so it cannot shadow Emacs's built-in `benchmark` library when package subdirectories are added to `load-path`.
 - Fix recursive startup activation for `package-vc` and `use-package :vc` installs by removing package self-dependencies from internal library headers.
 - Fit previews to both window dimensions and support keyboard focus, with `RET` opening the original-size diagram in Emacs's image viewer.
